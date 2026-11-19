@@ -8,12 +8,15 @@ interface DiagramCanvasProps {
   edges: DiagramEdge[];
   settings: EditorSettings;
   camera: Camera;
-  selectedNodeId: string | null;
+  selectedNodeIds: string[];
+  toolMode: "select" | "pan";
   connectMode: boolean;
   connectSourceId: string | null;
   onCameraChange: (camera: Camera) => void;
-  onSelectNode: (id: string) => void;
-  onMoveNode: (id: string, x: number, y: number) => void;
+  onSetSelection: (ids: string[]) => void;
+  onMoveNodes: (updates: Partial<DiagramNode>[]) => void;
+  onBeginHistoryAction: () => void;
+  onEndHistoryAction: () => void;
   onConnectNode: (id: string) => void;
   onClearSelection: () => void;
   onAddGuide: (axis: GuideAxis, position: number) => string;
@@ -28,8 +31,11 @@ const MAX_ZOOM = 4;
 
 type DragSession =
   | { type: "pan"; pointerId: number; startX: number; startY: number; cameraX: number; cameraY: number }
-  | { type: "node"; pointerId: number; nodeId: string; offsetX: number; offsetY: number }
-  | { type: "guide"; pointerId: number; guideId: string; axis: GuideAxis };
+  | { type: "nodes"; pointerId: number; start: ScreenPoint; nodes: DiagramNode[] }
+  | { type: "guide"; pointerId: number; guideId: string; axis: GuideAxis }
+  | { type: "marquee"; pointerId: number; start: ScreenPoint; current: ScreenPoint; additive: boolean; baseSelection: string[] }
+  | { type: "resize"; pointerId: number; start: ScreenPoint; handle: string; nodes: DiagramNode[]; bounds: WorldBounds }
+  | { type: "rotate"; pointerId: number; nodes: DiagramNode[]; pivot: ScreenPoint; startAngle: number };
 
 interface ScreenPoint {
   x: number;
@@ -83,7 +89,8 @@ const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectS
   return (
     <g
       data-node-id={node.id}
-      className={`diagram-node${selected ? " is-selected" : ""}${connectSource ? " is-connect-source" : ""}`}
+      className={`diagram-node${selected ? " is-selected" : ""}${connectSource ? " is-connect-source" : ""}${node.locked ? " is-locked" : ""}`}
+      transform={node.rotation ? `rotate(${node.rotation} ${node.x + node.width / 2} ${node.y + node.height / 2})` : undefined}
       role="button"
       tabIndex={0}
       aria-label={`${node.title}, ${node.kind === "class" ? "klasa UML" : node.kind === "decision" ? "decyzja" : "proces"}`}
@@ -94,6 +101,12 @@ const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectS
       <text x={node.x + node.width / 2} y={detailY} className="node-detail">
         {detailLines.map((line, index) => <tspan key={`${node.id}-detail-${index}`} x={node.x + node.width / 2} dy={index === 0 ? 0 : 18}>{line}</tspan>)}
       </text>
+      {node.locked && (
+        <g className="node-lock-mark" transform={`translate(${node.x + node.width - 20} ${node.y + 8})`} aria-hidden="true">
+          <rect x="0" y="7" width="12" height="10" rx="2" />
+          <path d="M 3 7 V 5 a3 3 0 0 1 6 0 v2" />
+        </g>
+      )}
     </g>
   );
 });
@@ -216,6 +229,52 @@ function GuideOverlays({ guides, camera }: { guides: Guide[]; camera: Camera }) 
   );
 }
 
+function nodeWorldBounds(node: DiagramNode): WorldBounds {
+  const radians = ((node.rotation ?? 0) * Math.PI) / 180;
+  const width = Math.abs(node.width * Math.cos(radians)) + Math.abs(node.height * Math.sin(radians));
+  const height = Math.abs(node.width * Math.sin(radians)) + Math.abs(node.height * Math.cos(radians));
+  return {
+    left: node.x + node.width / 2 - width / 2,
+    top: node.y + node.height / 2 - height / 2,
+    width,
+    height,
+  };
+}
+
+function boundsForNodes(nodes: DiagramNode[]): WorldBounds | null {
+  if (nodes.length === 0) return null;
+  const boxes = nodes.map(nodeWorldBounds);
+  const left = Math.min(...boxes.map((box) => box.left));
+  const top = Math.min(...boxes.map((box) => box.top));
+  const right = Math.max(...boxes.map((box) => box.left + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.top + box.height));
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+function SelectionOverlay({ bounds, camera }: { bounds: WorldBounds | null; camera: Camera }) {
+  if (!bounds) return null;
+  const size = 8 / camera.zoom;
+  const centerX = bounds.left + bounds.width / 2;
+  const centerY = bounds.top + bounds.height / 2;
+  const rotationY = bounds.top - 25 / camera.zoom;
+  const handles = [
+    ["nw", bounds.left, bounds.top], ["n", centerX, bounds.top], ["ne", bounds.left + bounds.width, bounds.top],
+    ["e", bounds.left + bounds.width, centerY], ["se", bounds.left + bounds.width, bounds.top + bounds.height],
+    ["s", centerX, bounds.top + bounds.height], ["sw", bounds.left, bounds.top + bounds.height], ["w", bounds.left, centerY],
+  ] as const;
+
+  return (
+    <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`} className="selection-transform-overlay">
+      <rect x={bounds.left} y={bounds.top} width={bounds.width} height={bounds.height} className="selection-outline" />
+      {handles.map(([handle, x, y]) => (
+        <rect key={handle} x={x - size / 2} y={y - size / 2} width={size} height={size} className="resize-handle" data-resize-handle={handle} />
+      ))}
+      <line x1={centerX} y1={bounds.top} x2={centerX} y2={rotationY + size / 2} className="rotation-stem" />
+      <circle cx={centerX} cy={rotationY} r={7 / camera.zoom} className="rotation-handle" data-rotate-handle="true" />
+    </g>
+  );
+}
+
 function distance(a: ScreenPoint, b: ScreenPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
@@ -318,12 +377,15 @@ export default function DiagramCanvas({
   edges,
   settings,
   camera,
-  selectedNodeId,
+  selectedNodeIds,
+  toolMode,
   connectMode,
   connectSourceId,
   onCameraChange,
-  onSelectNode,
-  onMoveNode,
+  onSetSelection,
+  onMoveNodes,
+  onBeginHistoryAction,
+  onEndHistoryAction,
   onConnectNode,
   onClearSelection,
   onAddGuide,
@@ -333,7 +395,11 @@ export default function DiagramCanvas({
   const dragRef = useRef<DragSession | null>(null);
   const pointerPointsRef = useRef(new Map<number, ScreenPoint>());
   const pinchRef = useRef<PinchSession | null>(null);
+  const [marquee, setMarquee] = useState<{ start: ScreenPoint; current: ScreenPoint } | null>(null);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const selectedNodes = nodes.filter((node) => selectedNodeIds.includes(node.id));
+  const movableSelectedNodes = selectedNodes.filter((node) => !node.locked);
+  const selectionBounds = boundsForNodes(movableSelectedNodes);
 
   function pointInSvg(event: { clientX: number; clientY: number }): ScreenPoint {
     const svg = svgRef.current;
@@ -354,14 +420,127 @@ export default function DiagramCanvas({
     dragRef.current = { type: "pan", pointerId, startX: point.x, startY: point.y, cameraX: camera.x, cameraY: camera.y };
   }
 
+  function beginTouchGesture(event: ReactPointerEvent<SVGSVGElement>, point: ScreenPoint, allowSelection: boolean) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerPointsRef.current.set(event.pointerId, point);
+    if (pointerPointsRef.current.size >= 2) {
+      const entries = [...pointerPointsRef.current.entries()].slice(0, 2);
+      const first = entries[0][1];
+      const second = entries[1][1];
+      const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+      const anchor = worldPoint(midpoint);
+      pinchRef.current = {
+        pointerIds: [entries[0][0], entries[1][0]],
+        startDistance: Math.max(1, distance(first, second)),
+        startZoom: camera.zoom,
+        worldX: anchor.x,
+        worldY: anchor.y,
+      };
+      dragRef.current = null;
+      setMarquee(null);
+    } else if (allowSelection) {
+      const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+      dragRef.current = { type: "marquee", pointerId: event.pointerId, start: point, current: point, additive, baseSelection: selectedNodeIds };
+      setMarquee({ start: point, current: point });
+    } else {
+      startPan(event.pointerId, point);
+    }
+  }
+
+  function expandGroup(node: DiagramNode): string[] {
+    return node.groupId ? nodes.filter((item) => item.groupId === node.groupId).map((item) => item.id) : [node.id];
+  }
+
+  function worldBoundsForPointDrag(start: ScreenPoint, current: ScreenPoint) {
+    const a = worldPoint(start);
+    const b = worldPoint(current);
+    return {
+      left: Math.min(a.x, b.x),
+      top: Math.min(a.y, b.y),
+      right: Math.max(a.x, b.x),
+      bottom: Math.max(a.y, b.y),
+    };
+  }
+
+  function beginNodeDrag(event: ReactPointerEvent<SVGSVGElement>, node: DiagramNode) {
+    const groupedIds = expandGroup(node);
+    const toggle = event.ctrlKey || event.metaKey;
+    const additive = event.shiftKey;
+    const alreadySelected = groupedIds.every((id) => selectedNodeIds.includes(id));
+    const togglingOff = toggle && alreadySelected;
+    let nextSelection: string[];
+    if (togglingOff) {
+      nextSelection = selectedNodeIds.filter((id) => !groupedIds.includes(id));
+    } else if (toggle || additive) {
+      nextSelection = [...new Set([...selectedNodeIds, ...groupedIds])];
+    } else if (selectedNodeIds.includes(node.id)) {
+      nextSelection = selectedNodeIds;
+    } else {
+      nextSelection = groupedIds;
+    }
+    onSetSelection(nextSelection);
+    if (togglingOff) return;
+
+    const movable = nodes.filter((item) => nextSelection.includes(item.id) && !item.locked);
+    if (movable.length === 0 || event.button !== 0) return;
+    const start = pointInSvg(event);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    onBeginHistoryAction();
+    dragRef.current = { type: "nodes", pointerId: event.pointerId, start, nodes: movable.map((item) => ({ ...item })) };
+  }
+
   function handleCanvasPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
     const target = event.target as Element;
+    if (event.pointerType !== "touch" && event.button !== 0 && event.button !== 1) return;
+    const isGuideTarget = Boolean(target.closest("[data-guide-id]"));
+    const isRulerTarget = Boolean(target.closest("[data-ruler-axis]"));
+    if (event.pointerType === "touch" && pointerPointsRef.current.size === 1 && !isGuideTarget && !isRulerTarget) {
+      beginTouchGesture(event, pointInSvg(event), false);
+      return;
+    }
+    if (event.pointerType !== "touch" && (event.button === 1 || toolMode === "pan") && !isGuideTarget && !isRulerTarget) {
+      const point = pointInSvg(event);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      startPan(event.pointerId, point);
+      onClearSelection();
+      return;
+    }
+    if (event.pointerType === "touch" && toolMode === "pan" && !isGuideTarget && !isRulerTarget) {
+      beginTouchGesture(event, pointInSvg(event), false);
+      onClearSelection();
+      return;
+    }
+    const resizeHandle = target.closest("[data-resize-handle]")?.getAttribute("data-resize-handle");
+    if (resizeHandle && event.button === 0 && movableSelectedNodes.length > 0 && selectionBounds) {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      onBeginHistoryAction();
+      dragRef.current = { type: "resize", pointerId: event.pointerId, start: pointInSvg(event), handle: resizeHandle, nodes: movableSelectedNodes.map((item) => ({ ...item })), bounds: selectionBounds };
+      return;
+    }
+    if (target.closest("[data-rotate-handle]") && event.button === 0 && movableSelectedNodes.length > 0 && selectionBounds) {
+      event.preventDefault();
+      const pivot = { x: selectionBounds.left + selectionBounds.width / 2, y: selectionBounds.top + selectionBounds.height / 2 };
+      const start = worldPoint(pointInSvg(event));
+      event.currentTarget.setPointerCapture(event.pointerId);
+      onBeginHistoryAction();
+      dragRef.current = {
+        type: "rotate",
+        pointerId: event.pointerId,
+        nodes: movableSelectedNodes.map((item) => ({ ...item })),
+        pivot,
+        startAngle: Math.atan2(start.y - pivot.y, start.x - pivot.x),
+      };
+      return;
+    }
+
     const guideElement = target.closest("[data-guide-id]");
     const guideId = guideElement?.getAttribute("data-guide-id");
     if (guideId && event.button === 0) {
       const guide = settings.guides.find((item) => item.id === guideId);
       if (!guide) return;
       event.currentTarget.setPointerCapture(event.pointerId);
+      onBeginHistoryAction();
       dragRef.current = { type: "guide", pointerId: event.pointerId, guideId, axis: guide.axis };
       return;
     }
@@ -371,6 +550,7 @@ export default function DiagramCanvas({
     if (settings.showRulers && (rulerAxis === "vertical" || rulerAxis === "horizontal") && event.button === 0) {
       const point = worldPoint(pointInSvg(event));
       const axis = rulerAxis as GuideAxis;
+      onBeginHistoryAction();
       const id = onAddGuide(axis, axis === "vertical" ? point.x : point.y);
       event.currentTarget.setPointerCapture(event.pointerId);
       dragRef.current = { type: "guide", pointerId: event.pointerId, guideId: id, axis };
@@ -387,39 +567,25 @@ export default function DiagramCanvas({
       if (event.button !== 0) return;
       const node = nodeById.get(nodeId);
       if (!node) return;
-      const point = worldPoint(pointInSvg(event));
-      event.currentTarget.setPointerCapture(event.pointerId);
-      dragRef.current = { type: "node", pointerId: event.pointerId, nodeId, offsetX: point.x - node.x, offsetY: point.y - node.y };
-      onSelectNode(nodeId);
+      beginNodeDrag(event, node);
       return;
     }
     if (event.button !== 0 && event.button !== 1) return;
 
     const point = pointInSvg(event);
-    event.currentTarget.setPointerCapture(event.pointerId);
     if (event.pointerType === "touch") {
-      pointerPointsRef.current.set(event.pointerId, point);
-      if (pointerPointsRef.current.size >= 2) {
-        const entries = [...pointerPointsRef.current.entries()].slice(0, 2);
-        const first = entries[0][1];
-        const second = entries[1][1];
-        const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
-        const anchor = worldPoint(midpoint);
-        pinchRef.current = {
-          pointerIds: [entries[0][0], entries[1][0]],
-          startDistance: Math.max(1, distance(first, second)),
-          startZoom: camera.zoom,
-          worldX: anchor.x,
-          worldY: anchor.y,
-        };
-        dragRef.current = null;
-      } else {
-        startPan(event.pointerId, point);
-      }
+      beginTouchGesture(event, point, true);
     } else {
-      startPan(event.pointerId, point);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      if (event.button === 1 || toolMode === "pan") {
+        startPan(event.pointerId, point);
+      } else {
+        const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+        dragRef.current = { type: "marquee", pointerId: event.pointerId, start: point, current: point, additive, baseSelection: selectedNodeIds };
+        setMarquee({ start: point, current: point });
+      }
     }
-    if (!connectMode) onClearSelection();
+    if (!connectMode && toolMode === "pan") onClearSelection();
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<SVGSVGElement>) {
@@ -429,26 +595,68 @@ export default function DiagramCanvas({
     if (!nodeId) return;
     event.preventDefault();
     if (connectMode) onConnectNode(nodeId);
-    else onSelectNode(nodeId);
+    else onSetSelection(expandGroup(nodeById.get(nodeId)!));
   }
 
-  function snappedPosition(position: number, size: number, axis: GuideAxis): number {
-    let result = position;
-    if (settings.snapToGrid) result = Math.round(result / settings.gridSpacingPx) * settings.gridSpacingPx;
+  function snapGroupDelta(selected: DiagramNode[], dx: number, dy: number): ScreenPoint {
+    const bounds = boundsForNodes(selected);
+    if (!bounds) return { x: dx, y: dy };
+    let nextX = dx;
+    let nextY = dy;
+    if (settings.snapToGrid) {
+      nextX = Math.round((bounds.left + nextX) / settings.gridSpacingPx) * settings.gridSpacingPx - bounds.left;
+      nextY = Math.round((bounds.top + nextY) / settings.gridSpacingPx) * settings.gridSpacingPx - bounds.top;
+    }
     const threshold = 8 / camera.zoom;
-    let nearestOffset = 0;
-    let nearestDistance = threshold;
     for (const guide of settings.guides) {
-      if (guide.axis !== axis) continue;
-      for (const anchorOffset of [0, size / 2, size]) {
-        const delta = guide.position - (result + anchorOffset);
-        if (Math.abs(delta) < nearestDistance) {
-          nearestDistance = Math.abs(delta);
-          nearestOffset = delta;
-        }
+      if (guide.axis === "vertical") {
+        const anchors = [bounds.left, bounds.left + bounds.width / 2, bounds.left + bounds.width];
+        const closest = anchors.map((anchor) => guide.position - (anchor + nextX)).sort((a, b) => Math.abs(a) - Math.abs(b))[0];
+        if (Math.abs(closest) <= threshold) nextX += closest;
+      } else {
+        const anchors = [bounds.top, bounds.top + bounds.height / 2, bounds.top + bounds.height];
+        const closest = anchors.map((anchor) => guide.position - (anchor + nextY)).sort((a, b) => Math.abs(a) - Math.abs(b))[0];
+        if (Math.abs(closest) <= threshold) nextY += closest;
       }
     }
-    return result + nearestOffset;
+    return { x: nextX, y: nextY };
+  }
+
+  function resizeNodes(session: Extract<DragSession, { type: "resize" }>, pointer: ScreenPoint, keepRatio: boolean) {
+    const { bounds, handle, nodes: startNodes } = session;
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    const leftSide = handle.includes("w");
+    const rightSide = handle.includes("e");
+    const topSide = handle.includes("n");
+    const bottomSide = handle.includes("s");
+    const startWorld = worldPoint(session.start);
+    const dx = pointer.x - startWorld.x;
+    const dy = pointer.y - startWorld.y;
+    const fixedX = leftSide ? bounds.left + bounds.width : rightSide ? bounds.left : bounds.left + bounds.width / 2;
+    const fixedY = topSide ? bounds.top + bounds.height : bottomSide ? bounds.top : bounds.top + bounds.height / 2;
+    let scaleX = leftSide ? (bounds.width - dx) / bounds.width : rightSide ? (bounds.width + dx) / bounds.width : 1;
+    let scaleY = topSide ? (bounds.height - dy) / bounds.height : bottomSide ? (bounds.height + dy) / bounds.height : 1;
+    if (keepRatio) {
+      const ratio = leftSide || rightSide ? Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) || (!topSide && !bottomSide) ? scaleX : scaleY : scaleY;
+      scaleX = ratio;
+      scaleY = ratio;
+    }
+    const minScaleX = Math.max(...startNodes.map((node) => 48 / node.width));
+    const minScaleY = Math.max(...startNodes.map((node) => 32 / node.height));
+    scaleX = Math.max(minScaleX, scaleX);
+    scaleY = Math.max(minScaleY, scaleY);
+    const nextWidth = bounds.width * scaleX;
+    const nextHeight = bounds.height * scaleY;
+    const nextLeft = leftSide ? fixedX - nextWidth : rightSide ? fixedX : fixedX - nextWidth / 2;
+    const nextTop = topSide ? fixedY - nextHeight : bottomSide ? fixedY : fixedY - nextHeight / 2;
+    onMoveNodes(startNodes.map((node) => {
+      const box = nodeWorldBounds(node);
+      const centerX = nextLeft + (box.left + box.width / 2 - bounds.left) * scaleX;
+      const centerY = nextTop + (box.top + box.height / 2 - bounds.top) * scaleY;
+      const width = node.width * scaleX;
+      const height = node.height * scaleY;
+      return { id: node.id, x: centerX - width / 2, y: centerY - height / 2, width, height };
+    }));
   }
 
   function handlePointerMove(event: ReactPointerEvent<SVGSVGElement>) {
@@ -475,14 +683,40 @@ export default function DiagramCanvas({
       return;
     }
     const world = worldPoint(point);
+    if (session.type === "marquee") {
+      dragRef.current = { ...session, current: point };
+      setMarquee({ start: session.start, current: point });
+      return;
+    }
     if (session.type === "guide") {
       onMoveGuide(session.guideId, session.axis === "vertical" ? world.x : world.y);
       return;
     }
-    const node = nodeById.get(session.nodeId);
-    const x = world.x - session.offsetX;
-    const y = world.y - session.offsetY;
-    onMoveNode(session.nodeId, snappedPosition(x, node?.width ?? 0, "vertical"), snappedPosition(y, node?.height ?? 0, "horizontal"));
+    if (session.type === "nodes") {
+      const startWorld = worldPoint(session.start);
+      const delta = snapGroupDelta(session.nodes, world.x - startWorld.x, world.y - startWorld.y);
+      onMoveNodes(session.nodes.map((node) => ({ id: node.id, x: node.x + delta.x, y: node.y + delta.y })));
+      return;
+    }
+    if (session.type === "resize") {
+      resizeNodes(session, world, event.shiftKey);
+      return;
+    }
+    const angle = Math.atan2(world.y - session.pivot.y, world.x - session.pivot.x);
+    let deltaDegrees = ((angle - session.startAngle) * 180 / Math.PI + 540) % 360 - 180;
+    const step = Math.max(1, settings.rotationSnapDegrees);
+    if (!event.shiftKey) deltaDegrees = Math.round(deltaDegrees / step) * step;
+    const deltaRadians = deltaDegrees * Math.PI / 180;
+    const cos = Math.cos(deltaRadians);
+    const sin = Math.sin(deltaRadians);
+    onMoveNodes(session.nodes.map((node) => {
+      const centerX = node.x + node.width / 2 - session.pivot.x;
+      const centerY = node.y + node.height / 2 - session.pivot.y;
+      const nextCenterX = session.pivot.x + centerX * cos - centerY * sin;
+      const nextCenterY = session.pivot.y + centerX * sin + centerY * cos;
+      const rotation = ((node.rotation ?? 0) + deltaDegrees + 360) % 360;
+      return { id: node.id, x: nextCenterX - node.width / 2, y: nextCenterY - node.height / 2, rotation };
+    }));
   }
 
   function handlePointerUp(event: ReactPointerEvent<SVGSVGElement>) {
@@ -491,11 +725,27 @@ export default function DiagramCanvas({
     if (wasPinch) {
       pinchRef.current = null;
       dragRef.current = null;
+      setMarquee(null);
       const remaining = [...pointerPointsRef.current.entries()][0];
       if (remaining) startPan(remaining[0], remaining[1]);
-    } else if (dragRef.current?.pointerId === event.pointerId) {
-      dragRef.current = null;
+      return;
     }
+    const session = dragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (session.type === "marquee") {
+      const bounds = worldBoundsForPointDrag(session.start, session.current);
+      const hitIds = nodes.filter((node) => {
+        const box = nodeWorldBounds(node);
+        return box.left <= bounds.right && box.left + box.width >= bounds.left && box.top <= bounds.bottom && box.top + box.height >= bounds.top;
+      }).map((node) => node.id);
+      const hitGroups = new Set(nodes.filter((node) => hitIds.includes(node.id) && node.groupId).map((node) => node.groupId));
+      const hits = nodes.filter((node) => hitIds.includes(node.id) || (node.groupId && hitGroups.has(node.groupId))).map((node) => node.id);
+      onSetSelection(session.additive ? [...new Set([...session.baseSelection, ...hits])] : hits);
+      setMarquee(null);
+    } else if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide") {
+      onEndHistoryAction();
+    }
+    dragRef.current = null;
   }
 
   function handleWheel(event: ReactWheelEvent<SVGSVGElement>) {
@@ -520,10 +770,11 @@ export default function DiagramCanvas({
     <div className="canvas-frame">
       <svg
         ref={svgRef}
-        className={`diagram-canvas${connectMode ? " is-connecting" : ""}`}
+        className={`diagram-canvas${connectMode ? " is-connecting" : ""}${toolMode === "select" ? " is-select-tool" : " is-pan-tool"}`}
         viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+        tabIndex={0}
         role="application"
-        aria-label="Nieograniczone płótno diagramu. Przeciągaj tło, aby przesuwać widok; użyj kółka myszy albo gestu dwoma palcami, aby zmieniać powiększenie."
+        aria-label="Nieograniczone płótno diagramu. W trybie zaznaczania przeciągnij tło, aby zaznaczyć obszar. Wybierz narzędzie ręki, aby przesuwać widok; kółko myszy lub gest dwoma palcami zmienia powiększenie."
         onPointerDown={handleCanvasPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -545,9 +796,19 @@ export default function DiagramCanvas({
             const to = nodeById.get(edge.to);
             return from && to ? <DiagramEdgeView key={edge.id} from={from} to={to} /> : null;
           })}
-          {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeId === node.id} connectSource={node.id === connectSourceId} />)}
+          {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeIds.includes(node.id)} connectSource={node.id === connectSourceId} />)}
         </g>
         <GuideOverlays guides={settings.guides} camera={camera} />
+        <SelectionOverlay bounds={selectionBounds} camera={camera} />
+        {marquee && (
+          <rect
+            x={Math.min(marquee.start.x, marquee.current.x)}
+            y={Math.min(marquee.start.y, marquee.current.y)}
+            width={Math.abs(marquee.current.x - marquee.start.x)}
+            height={Math.abs(marquee.current.y - marquee.start.y)}
+            className="selection-marquee"
+          />
+        )}
         {settings.showRulers && <Rulers camera={camera} unit={settings.unit} />}
       </svg>
       {settings.showMinimap && <MiniMap nodes={nodes} edges={edges} camera={camera} onCameraChange={onCameraChange} />}

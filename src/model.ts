@@ -9,6 +9,9 @@ export interface DiagramNode {
   height: number;
   title: string;
   detail: string;
+  rotation?: number;
+  locked?: boolean;
+  groupId?: string;
 }
 
 export interface DiagramEdge {
@@ -43,6 +46,7 @@ export interface EditorSettings {
   gridStyle: GridStyle;
   gridSpacingPx: number;
   snapToGrid: boolean;
+  rotationSnapDegrees: number;
   showRulers: boolean;
   unit: MeasurementUnit;
   showMinimap: boolean;
@@ -61,6 +65,7 @@ export const defaultEditorSettings: EditorSettings = {
   gridStyle: "dots",
   gridSpacingPx: 24,
   snapToGrid: false,
+  rotationSnapDegrees: 15,
   showRulers: true,
   unit: "px",
   showMinimap: true,

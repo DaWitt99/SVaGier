@@ -13,6 +13,14 @@ function center(node: DiagramNode) {
   return { x: node.x + node.width / 2, y: node.y + node.height / 2 };
 }
 
+function visualBounds(node: DiagramNode) {
+  const radians = ((node.rotation ?? 0) * Math.PI) / 180;
+  const width = Math.abs(node.width * Math.cos(radians)) + Math.abs(node.height * Math.sin(radians));
+  const height = Math.abs(node.width * Math.sin(radians)) + Math.abs(node.height * Math.cos(radians));
+  const nodeCenter = center(node);
+  return { left: nodeCenter.x - width / 2, top: nodeCenter.y - height / 2, right: nodeCenter.x + width / 2, bottom: nodeCenter.y + height / 2 };
+}
+
 function renderNode(node: DiagramNode): string {
   const titleY = node.kind === "class" ? node.y + 30 : node.y + node.height / 2 - 8;
   const detailY = node.kind === "class" ? node.y + 67 : node.y + node.height / 2 + 20;
@@ -39,16 +47,18 @@ function renderNode(node: DiagramNode): string {
     .map((line, index) => `<tspan x="${node.x + node.width / 2}" dy="${index === 0 ? 0 : 18}">${line}</tspan>`)
     .join("");
 
-  return `<g font-family="Inter, Arial, sans-serif" text-anchor="middle">${shape}<text x="${node.x + node.width / 2}" y="${titleY}" fill="#25243a" font-size="16" font-weight="650">${title}</text><text x="${node.x + node.width / 2}" y="${detailY}" fill="#74738a" font-size="12">${detail}</text></g>`;
+  const rotation = node.rotation ? ` transform="rotate(${node.rotation} ${node.x + node.width / 2} ${node.y + node.height / 2})"` : "";
+  return `<g font-family="Inter, Arial, sans-serif" text-anchor="middle"${rotation}>${shape}<text x="${node.x + node.width / 2}" y="${titleY}" fill="#25243a" font-size="16" font-weight="650">${title}</text><text x="${node.x + node.width / 2}" y="${detailY}" fill="#74738a" font-size="12">${detail}</text></g>`;
 }
 
 export function createSvgMarkup(document: DiagramDocument): string {
   const nodeMap = new Map(document.nodes.map((node) => [node.id, node]));
   const margin = 80;
-  const left = document.nodes.length ? Math.min(...document.nodes.map((node) => node.x)) - margin : -margin;
-  const top = document.nodes.length ? Math.min(...document.nodes.map((node) => node.y)) - margin : -margin;
-  const right = document.nodes.length ? Math.max(...document.nodes.map((node) => node.x + node.width)) + margin : margin;
-  const bottom = document.nodes.length ? Math.max(...document.nodes.map((node) => node.y + node.height)) + margin : margin;
+  const bounds = document.nodes.map(visualBounds);
+  const left = bounds.length ? Math.min(...bounds.map((box) => box.left)) - margin : -margin;
+  const top = bounds.length ? Math.min(...bounds.map((box) => box.top)) - margin : -margin;
+  const right = bounds.length ? Math.max(...bounds.map((box) => box.right)) + margin : margin;
+  const bottom = bounds.length ? Math.max(...bounds.map((box) => box.bottom)) + margin : margin;
   const width = Math.max(right - left, 640);
   const height = Math.max(bottom - top, 420);
   const edges = document.edges

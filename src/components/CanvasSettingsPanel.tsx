@@ -93,6 +93,12 @@ export default function CanvasSettingsPanel({
             }}
           />
         </label>
+        <label className="settings-field">
+          <span>Przyciąganie obrotu</span>
+          <select value={settings.rotationSnapDegrees} onChange={(event) => onChange({ rotationSnapDegrees: Number(event.target.value) })}>
+            {[1, 5, 10, 15, 30, 45, 90].map((degrees) => <option key={degrees} value={degrees}>{degrees}°</option>)}
+          </select>
+        </label>
         <label className="settings-toggle">
           <input type="checkbox" checked={settings.snapToGrid} onChange={(event) => onChange({ snapToGrid: event.target.checked })} />
           <span>Przyciągaj elementy do siatki</span>

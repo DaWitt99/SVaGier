@@ -343,6 +343,93 @@ select:focus-visible {
   opacity: 0.38;
 }
 
+.history-button {
+  width: 30px;
+  padding: 0 !important;
+}
+
+.selection-toolbar {
+  z-index: 1;
+  display: flex;
+  flex: 0 0 42px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 42px;
+  overflow-x: auto;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+.selection-toolbar button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 27px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #656479;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.selection-toolbar button:hover:not(:disabled) {
+  border-color: #e8e7ef;
+  background: #f7f6fb;
+  color: var(--purple-dark);
+}
+
+.selection-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.selection-toolbar-count {
+  flex: 0 0 auto;
+  margin-right: 4px;
+  color: #77768b;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.selection-toolbar-divider {
+  width: 1px;
+  height: 19px;
+  flex: 0 0 auto;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.rotation-step-control {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  color: #89889d;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.rotation-step-control select {
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid #e8e7ef;
+  border-radius: 6px;
+  background: #fff;
+  color: #656479;
+  font-size: 10px;
+}
+
 .canvas-stage {
   position: relative;
   flex: 1;
@@ -703,6 +790,14 @@ select:focus-visible {
   user-select: none;
 }
 
+.diagram-canvas.is-select-tool {
+  cursor: crosshair;
+}
+
+.diagram-canvas.is-pan-tool {
+  cursor: grab;
+}
+
 .diagram-canvas:active {
   cursor: grabbing;
 }
@@ -725,6 +820,84 @@ select:focus-visible {
 
 .diagram-node:active {
   cursor: grabbing;
+}
+
+.diagram-node.is-locked {
+  cursor: default;
+}
+
+.node-lock-mark rect {
+  fill: #f0edff;
+  stroke: #8a78e6;
+  stroke-width: 1.4;
+}
+
+.node-lock-mark path {
+  fill: none;
+  stroke: #8a78e6;
+  stroke-width: 1.6;
+}
+
+.selection-outline {
+  fill: #7965e808;
+  stroke: #7965e8;
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.resize-handle {
+  fill: #fff;
+  stroke: #705bd9;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: all;
+}
+
+.resize-handle[data-resize-handle="nw"],
+.resize-handle[data-resize-handle="se"] {
+  cursor: nwse-resize;
+}
+
+.resize-handle[data-resize-handle="ne"],
+.resize-handle[data-resize-handle="sw"] {
+  cursor: nesw-resize;
+}
+
+.resize-handle[data-resize-handle="n"],
+.resize-handle[data-resize-handle="s"] {
+  cursor: ns-resize;
+}
+
+.resize-handle[data-resize-handle="e"],
+.resize-handle[data-resize-handle="w"] {
+  cursor: ew-resize;
+}
+
+.rotation-stem {
+  stroke: #7965e8;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.rotation-handle {
+  fill: #fff;
+  stroke: #705bd9;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: grab;
+  pointer-events: all;
+}
+
+.selection-marquee {
+  fill: #7965e81c;
+  stroke: #7965e8;
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .node-shape {
@@ -903,6 +1076,14 @@ select:focus-visible {
   border-color: #b8adf5;
 }
 
+.field-group input:disabled,
+.field-group textarea:disabled,
+.field-group select:disabled {
+  background: #f8f8fb;
+  color: #a09faf;
+  cursor: not-allowed;
+}
+
 .field-group select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238b899e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
@@ -951,6 +1132,33 @@ select:focus-visible {
   margin: 0;
   font-size: 11px;
   line-height: 1.6;
+}
+
+.multi-selection-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 15px 13px;
+  border: 1px solid #eeebfc;
+  border-radius: 10px;
+  background: #faf9ff;
+  color: #77748e;
+  font-size: 11px;
+}
+
+.multi-selection-summary svg {
+  color: var(--purple-dark);
+}
+
+.multi-selection-summary strong {
+  color: #4a4860;
+  font-size: 12px;
+}
+
+.multi-selection-summary span {
+  color: #9391a5;
+  font-size: 10px;
 }
 
 .empty-inspector-icon {
