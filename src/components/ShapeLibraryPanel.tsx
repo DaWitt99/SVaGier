@@ -71,7 +71,9 @@ export default function ShapeLibraryPanel({ onAdd, onSelectFreehand, onClose }: 
       <div className="shape-library-grid">
         {items.map((item) => (
           <button key={item.kind} type="button" className="shape-library-item" onClick={() => onAdd(item.kind, item.title, item.width, item.height)}>
-            <span className={`shape-library-glyph glyph-${item.kind}`} title={item.glyph}><ShapePreview kind={item.kind} /></span>
+            <span className={`shape-library-glyph glyph-${item.kind}`} title={item.glyph}>
+              <svg viewBox="0 0 44 36" aria-hidden="true"><ShapePreview kind={item.kind} /></svg>
+            </span>
             <span className="shape-library-copy"><strong>{item.title}</strong><small>{item.description}</small></span>
           </button>
         ))}
