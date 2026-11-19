@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
 import type { Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, MeasurementUnit } from "../model";
 import { formatMeasurement } from "../units";
@@ -31,9 +31,17 @@ interface DiagramCanvasProps {
 
 export const CANVAS_WIDTH = 1440;
 export const CANVAS_HEIGHT = 900;
-const RULER_SIZE = 25;
+const RULER_SIZE = 32;
 const MIN_ZOOM = 0.06;
 const MAX_ZOOM = 4;
+
+interface CanvasViewport {
+  width: number;
+  height: number;
+  originX: number;
+  originY: number;
+  scale: number;
+}
 
 type DragSession =
   | { type: "pan"; pointerId: number; startX: number; startY: number; cameraX: number; cameraY: number }
@@ -209,12 +217,13 @@ function GridPattern({ settings, camera }: { settings: EditorSettings; camera: C
   );
 }
 
-function Rulers({ camera, unit }: { camera: Camera; unit: MeasurementUnit }) {
+function Rulers({ camera, unit, viewport }: { camera: Camera; unit: MeasurementUnit; viewport: CanvasViewport }) {
   const step = niceWorldStep(camera.zoom);
-  const verticalStart = (RULER_SIZE - camera.x) / camera.zoom;
-  const horizontalStart = (RULER_SIZE - camera.y) / camera.zoom;
-  const verticalEnd = (CANVAS_WIDTH - camera.x) / camera.zoom;
-  const horizontalEnd = (CANVAS_HEIGHT - camera.y) / camera.zoom;
+  const rulerSize = RULER_SIZE / viewport.scale;
+  const verticalStart = (viewport.originX + rulerSize - camera.x) / camera.zoom;
+  const horizontalStart = (viewport.originY + rulerSize - camera.y) / camera.zoom;
+  const verticalEnd = (viewport.originX + viewport.width - camera.x) / camera.zoom;
+  const horizontalEnd = (viewport.originY + viewport.height - camera.y) / camera.zoom;
   const xTicks: { value: number; screen: number }[] = [];
   const yTicks: { value: number; screen: number }[] = [];
 
@@ -225,30 +234,33 @@ function Rulers({ camera, unit }: { camera: Camera; unit: MeasurementUnit }) {
     yTicks.push({ value, screen: camera.y + value * camera.zoom });
   }
 
+  const localX = (screen: number) => (screen - viewport.originX) * viewport.scale;
+  const localY = (screen: number) => (screen - viewport.originY) * viewport.scale;
+
   return (
-    <g className="canvas-rulers">
-      <rect x={RULER_SIZE} y="0" width={CANVAS_WIDTH - RULER_SIZE} height={RULER_SIZE} className="ruler-surface" data-ruler-axis="vertical" />
-      <rect x="0" y={RULER_SIZE} width={RULER_SIZE} height={CANVAS_HEIGHT - RULER_SIZE} className="ruler-surface" data-ruler-axis="horizontal" />
+    <g transform={`translate(${viewport.originX} ${viewport.originY}) scale(${1 / viewport.scale})`} className="canvas-rulers">
+      <rect x={RULER_SIZE} y="0" width={viewport.width * viewport.scale - RULER_SIZE} height={RULER_SIZE} className="ruler-surface" data-ruler-axis="vertical" />
+      <rect x="0" y={RULER_SIZE} width={RULER_SIZE} height={viewport.height * viewport.scale - RULER_SIZE} className="ruler-surface" data-ruler-axis="horizontal" />
       <rect x="0" y="0" width={RULER_SIZE} height={RULER_SIZE} className="ruler-corner" />
       {xTicks.map(({ value, screen }) => (
         <g key={`x-${value}`}>
-          <line x1={screen} x2={screen} y1={RULER_SIZE - 6} y2={RULER_SIZE} className="ruler-tick" />
-          <text x={screen + 3} y="10" className="ruler-label" data-ruler-axis="vertical">{formatMeasurement(value, unit)}</text>
-          <rect x={screen - 6} y="12" width="12" height="12" className="ruler-hit-area" data-ruler-axis="vertical" />
+          <line x1={localX(screen)} x2={localX(screen)} y1={RULER_SIZE - 7} y2={RULER_SIZE} className="ruler-tick" />
+          <text x={localX(screen) + 4} y="12" className="ruler-label" data-ruler-axis="vertical">{formatMeasurement(value, unit)}</text>
+          <rect x={localX(screen) - 6} y="14" width="12" height="12" className="ruler-hit-area" data-ruler-axis="vertical" />
         </g>
       ))}
       {yTicks.map(({ value, screen }) => (
         <g key={`y-${value}`}>
-          <line x1={RULER_SIZE - 6} x2={RULER_SIZE} y1={screen} y2={screen} className="ruler-tick" />
-          <text x="3" y={screen - 3} className="ruler-label" data-ruler-axis="horizontal">{formatMeasurement(value, unit)}</text>
-          <rect x="0" y={screen - 6} width={RULER_SIZE} height="12" className="ruler-hit-area" data-ruler-axis="horizontal" />
+          <line x1={RULER_SIZE - 7} x2={RULER_SIZE} y1={localY(screen)} y2={localY(screen)} className="ruler-tick" />
+          <text x="4" y={localY(screen) - 3} className="ruler-label" data-ruler-axis="horizontal">{formatMeasurement(value, unit)}</text>
+          <rect x="0" y={localY(screen) - 6} width={RULER_SIZE} height="12" className="ruler-hit-area" data-ruler-axis="horizontal" />
         </g>
       ))}
     </g>
   );
 }
 
-function GuideOverlays({ guides, camera }: { guides: Guide[]; camera: Camera }) {
+function GuideOverlays({ guides, camera, viewport }: { guides: Guide[]; camera: Camera; viewport: CanvasViewport }) {
   return (
     <g className="canvas-guides">
       {guides.map((guide) => {
@@ -257,13 +269,13 @@ function GuideOverlays({ guides, camera }: { guides: Guide[]; camera: Camera }) 
           <g key={guide.id} data-guide-id={guide.id} className="canvas-guide">
             {guide.axis === "vertical" ? (
               <>
-                <line x1={position} x2={position} y1={0} y2={CANVAS_HEIGHT} className="guide-hit-area" />
-                <line x1={position} x2={position} y1={0} y2={CANVAS_HEIGHT} className="guide-line" />
+                <line x1={position} x2={position} y1={viewport.originY} y2={viewport.originY + viewport.height} className="guide-hit-area" />
+                <line x1={position} x2={position} y1={viewport.originY} y2={viewport.originY + viewport.height} className="guide-line" />
               </>
             ) : (
               <>
-                <line x1={0} x2={CANVAS_WIDTH} y1={position} y2={position} className="guide-hit-area" />
-                <line x1={0} x2={CANVAS_WIDTH} y1={position} y2={position} className="guide-line" />
+                <line x1={viewport.originX} x2={viewport.originX + viewport.width} y1={position} y2={position} className="guide-hit-area" />
+                <line x1={viewport.originX} x2={viewport.originX + viewport.width} y1={position} y2={position} className="guide-line" />
               </>
             )}
           </g>
@@ -348,11 +360,11 @@ function distance(a: ScreenPoint, b: ScreenPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function getMinimapBounds(nodes: DiagramNode[], camera: Camera): WorldBounds {
-  const viewLeft = -camera.x / camera.zoom;
-  const viewTop = -camera.y / camera.zoom;
-  const viewRight = viewLeft + CANVAS_WIDTH / camera.zoom;
-  const viewBottom = viewTop + CANVAS_HEIGHT / camera.zoom;
+function getMinimapBounds(nodes: DiagramNode[], camera: Camera, viewport: CanvasViewport): WorldBounds {
+  const viewLeft = (viewport.originX - camera.x) / camera.zoom;
+  const viewTop = (viewport.originY - camera.y) / camera.zoom;
+  const viewRight = viewLeft + viewport.width / camera.zoom;
+  const viewBottom = viewTop + viewport.height / camera.zoom;
   const left = Math.min(viewLeft, ...nodes.map((node) => node.x));
   const top = Math.min(viewTop, ...nodes.map((node) => node.y));
   const right = Math.max(viewRight, ...nodes.map((node) => node.x + node.width));
@@ -362,23 +374,24 @@ function getMinimapBounds(nodes: DiagramNode[], camera: Camera): WorldBounds {
   return { left: left - marginX, top: top - marginY, width: right - left + marginX * 2, height: bottom - top + marginY * 2 };
 }
 
-function MiniMap({ nodes, edges, camera, onCameraChange }: {
+function MiniMap({ nodes, edges, camera, viewport, onCameraChange }: {
   nodes: DiagramNode[];
   edges: DiagramEdge[];
   camera: Camera;
+  viewport: CanvasViewport;
   onCameraChange: (camera: Camera) => void;
 }) {
   const [dragBounds, setDragBounds] = useState<WorldBounds | null>(null);
-  const bounds = dragBounds ?? getMinimapBounds(nodes, camera);
+  const bounds = dragBounds ?? getMinimapBounds(nodes, camera, viewport);
   const width = 190;
   const height = 126;
   const pad = 8;
   const scale = Math.min((width - pad * 2) / bounds.width, (height - pad * 2) / bounds.height);
   const worldToMini = (x: number, y: number) => ({ x: pad + (x - bounds.left) * scale, y: pad + (y - bounds.top) * scale });
-  const viewLeft = -camera.x / camera.zoom;
-  const viewTop = -camera.y / camera.zoom;
-  const viewWidth = CANVAS_WIDTH / camera.zoom;
-  const viewHeight = CANVAS_HEIGHT / camera.zoom;
+  const viewLeft = (viewport.originX - camera.x) / camera.zoom;
+  const viewTop = (viewport.originY - camera.y) / camera.zoom;
+  const viewWidth = viewport.width / camera.zoom;
+  const viewHeight = viewport.height / camera.zoom;
   const miniView = worldToMini(viewLeft, viewTop);
   const mapNode = new Map(nodes.map((node) => [node.id, node]));
 
@@ -389,7 +402,7 @@ function MiniMap({ nodes, edges, camera, onCameraChange }: {
     const mapScale = Math.min((width - pad * 2) / mapBounds.width, (height - pad * 2) / mapBounds.height);
     const worldX = mapBounds.left + (miniX - pad) / mapScale;
     const worldY = mapBounds.top + (miniY - pad) / mapScale;
-    onCameraChange({ x: CANVAS_WIDTH / 2 - worldX * camera.zoom, y: CANVAS_HEIGHT / 2 - worldY * camera.zoom, zoom: camera.zoom });
+    onCameraChange({ x: viewport.originX + viewport.width / 2 - worldX * camera.zoom, y: viewport.originY + viewport.height / 2 - worldY * camera.zoom, zoom: camera.zoom });
   }
 
   return (
@@ -466,6 +479,7 @@ export default function DiagramCanvas({
   onMoveGuide,
 }: DiagramCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [viewport, setViewport] = useState<CanvasViewport>({ width: CANVAS_WIDTH, height: CANVAS_HEIGHT, originX: 0, originY: 0, scale: 1 });
   const dragRef = useRef<DragSession | null>(null);
   const pointerPointsRef = useRef(new Map<number, ScreenPoint>());
   const pinchRef = useRef<PinchSession | null>(null);
@@ -476,6 +490,29 @@ export default function DiagramCanvas({
   const selectedNodes = nodes.filter((node) => selectedNodeIds.includes(node.id));
   const movableSelectedNodes = selectedNodes.filter((node) => !node.locked);
   const selectionBounds = boundsForNodes(movableSelectedNodes);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      const height = entry.contentRect.height;
+      if (width <= 0 || height <= 0) return;
+      const scale = Math.min(width / CANVAS_WIDTH, height / CANVAS_HEIGHT);
+      const nextWidth = width / scale;
+      const nextHeight = height / scale;
+      const nextViewport = {
+        width: nextWidth,
+        height: nextHeight,
+        originX: (CANVAS_WIDTH - nextWidth) / 2,
+        originY: (CANVAS_HEIGHT - nextHeight) / 2,
+        scale,
+      };
+      setViewport((current) => Math.abs(current.width - nextWidth) < 0.5 && Math.abs(current.height - nextHeight) < 0.5 && Math.abs(current.scale - scale) < 0.001 ? current : nextViewport);
+    });
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, []);
 
   function pointInSvg(event: { clientX: number; clientY: number }): ScreenPoint {
     const svg = svgRef.current;
@@ -944,8 +981,8 @@ export default function DiagramCanvas({
 
   function updateZoom(zoom: number) {
     const nextZoom = clampZoom(zoom);
-    const centerX = CANVAS_WIDTH / 2;
-    const centerY = CANVAS_HEIGHT / 2;
+    const centerX = viewport.originX + viewport.width / 2;
+    const centerY = viewport.originY + viewport.height / 2;
     const worldX = (centerX - camera.x) / camera.zoom;
     const worldY = (centerY - camera.y) / camera.zoom;
     onCameraChange({ x: centerX - worldX * nextZoom, y: centerY - worldY * nextZoom, zoom: nextZoom });
@@ -956,7 +993,7 @@ export default function DiagramCanvas({
       <svg
         ref={svgRef}
         className={`diagram-canvas${connectMode ? " is-connecting" : ""}${toolMode === "select" ? " is-select-tool" : toolMode === "pan" ? " is-pan-tool" : " is-freehand-tool"}`}
-        viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+        viewBox={`${viewport.originX} ${viewport.originY} ${viewport.width} ${viewport.height}`}
         tabIndex={0}
         role="application"
         aria-label="Płótno diagramu. W trybie zaznaczania przeciągnij tło, aby zaznaczyć obszar. Narzędzie ręki przesuwa widok, pióro rysuje krzywe, a kółko myszy lub gest dwoma palcami zmienia powiększenie."
@@ -973,8 +1010,8 @@ export default function DiagramCanvas({
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#aaa6c4" />
           </marker>
         </defs>
-        <rect width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="#fbfbfe" data-canvas-background="true" />
-        <rect width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="url(#grid-pattern)" data-canvas-background="true" />
+        <rect x={viewport.originX} y={viewport.originY} width={viewport.width} height={viewport.height} fill="#fbfbfe" data-canvas-background="true" />
+        <rect x={viewport.originX} y={viewport.originY} width={viewport.width} height={viewport.height} fill="url(#grid-pattern)" data-canvas-background="true" />
         <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}>
           {edges.map((edge) => {
             const from = nodeById.get(edge.from);
@@ -985,7 +1022,7 @@ export default function DiagramCanvas({
           {freehandPreview.length > 1 && <path d={bezierPath(freehandPreview)} className="freehand-preview" />}
           {connectionPreview && <path d={`M ${connectionPreview.start.x} ${connectionPreview.start.y} L ${connectionPreview.end.x} ${connectionPreview.end.y}`} className="connection-preview" />}
         </g>
-        <GuideOverlays guides={settings.guides} camera={camera} />
+        <GuideOverlays guides={settings.guides} camera={camera} viewport={viewport} />
         <SelectionOverlay bounds={selectionBounds} camera={camera} />
         <PathHandlesOverlay nodes={nodes} selectedNodeIds={selectedNodeIds} camera={camera} />
         {marquee && (
@@ -997,9 +1034,9 @@ export default function DiagramCanvas({
             className="selection-marquee"
           />
         )}
-        {settings.showRulers && <Rulers camera={camera} unit={settings.unit} />}
+        {settings.showRulers && <Rulers camera={camera} unit={settings.unit} viewport={viewport} />}
       </svg>
-      {settings.showMinimap && <MiniMap nodes={nodes} edges={edges} camera={camera} onCameraChange={onCameraChange} />}
+      {settings.showMinimap && <MiniMap nodes={nodes} edges={edges} camera={camera} viewport={viewport} onCameraChange={onCameraChange} />}
       <div className="canvas-zoom" aria-label="Sterowanie powiększeniem">
         <button type="button" aria-label="Pomniejsz" onClick={() => updateZoom(camera.zoom - 0.1)}>−</button>
         <span>{Math.round(camera.zoom * 100)}%</span>

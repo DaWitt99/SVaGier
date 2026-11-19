@@ -1,7 +1,7 @@
 :root {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #28273b;
-  background: #f7f8fc;
+  background: #f4f5fb;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -12,7 +12,7 @@
   font-feature-settings: "ss01" on;
   --ink: #28273b;
   --muted: #89889d;
-  --line: #e9e9f1;
+  --line: #e7e8f0;
   --purple: #7965e8;
   --purple-dark: #654fd2;
   --panel: #fff;
@@ -54,7 +54,7 @@ select:focus-visible {
   height: 100dvh;
   min-height: 560px;
   overflow: hidden;
-  background: #f7f8fc;
+  background: #f4f5fb;
 }
 
 .topbar {
@@ -66,7 +66,8 @@ select:focus-visible {
   height: 64px;
   padding: 0 22px;
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: linear-gradient(180deg, #fff 0%, #fdfdff 100%);
+  box-shadow: 0 2px 9px #25234108;
 }
 
 .brand {
@@ -228,9 +229,9 @@ select:focus-visible {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 9px;
+  padding: 17px 9px;
   border-right: 1px solid var(--line);
-  background: #fff;
+  background: linear-gradient(180deg, #fff 0%, #fcfcff 100%);
 }
 
 .rail-group {
@@ -242,7 +243,7 @@ select:focus-visible {
 .rail-button {
   width: 42px;
   height: 42px;
-  border-radius: 11px;
+  border-radius: 12px;
   background: transparent;
   color: #85849a;
   transition: background 120ms ease, color 120ms ease;
@@ -256,6 +257,7 @@ select:focus-visible {
 .rail-button.active {
   background: #f0edff;
   color: var(--purple-dark);
+  box-shadow: inset 0 0 0 1px #e7e1ff, 0 2px 6px #7965e814;
 }
 
 .editor-area {
@@ -276,6 +278,7 @@ select:focus-visible {
   padding: 0 18px;
   border-bottom: 1px solid var(--line);
   background: #fff;
+  box-shadow: 0 2px 8px #25234108;
 }
 
 .toolbar-context,
@@ -326,6 +329,7 @@ select:focus-visible {
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 .toolbar-button:hover:not(:disabled) {
@@ -334,6 +338,7 @@ select:focus-visible {
 }
 
 .toolbar-button.selected {
+  border: 1px solid #e6e0ff;
   background: #f0edff;
   color: var(--purple-dark);
 }
@@ -438,9 +443,9 @@ select:focus-visible {
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: 20px;
+  padding: 18px;
   overflow: hidden;
-  background: #f7f8fc;
+  background: radial-gradient(ellipse at 50% 44%, #f9f9fe 0%, #f1f2f9 100%);
 }
 
 .canvas-frame {
@@ -449,10 +454,10 @@ select:focus-visible {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid #e9e9f1;
-  border-radius: 15px;
+  border: 1px solid #e3e4ee;
+  border-radius: 16px;
   background: #fbfbfe;
-  box-shadow: 0 4px 18px #36344d08;
+  box-shadow: 0 9px 28px #302e4510, 0 1px 3px #302e4508;
 }
 
 .canvas-settings-panel {
@@ -790,15 +795,15 @@ select:focus-visible {
 }
 
 .ruler-surface {
-  fill: #f7f7fb;
-  stroke: #e1e0ea;
+  fill: #f8f8fc;
+  stroke: #e5e5ee;
   stroke-width: 0.7;
   cursor: crosshair;
 }
 
 .ruler-corner {
-  fill: #efeff5;
-  stroke: #e1e0ea;
+  fill: #f1f0f7;
+  stroke: #e5e5ee;
   stroke-width: 0.7;
 }
 
@@ -1201,6 +1206,7 @@ select:focus-visible {
   min-width: 0;
   border-left: 1px solid var(--line);
   background: #fff;
+  box-shadow: -3px 0 14px #302e4508;
 }
 
 .inspector-heading {
@@ -1230,9 +1236,14 @@ select:focus-visible {
 
 .inspector-content {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 20px;
+  min-height: 0;
+  overflow-y: auto;
   padding: 22px 18px;
+  scrollbar-color: #d5d2e3 transparent;
+  scrollbar-width: thin;
 }
 
 .field-group {
@@ -1259,6 +1270,7 @@ select:focus-visible {
   font-size: 12px;
   line-height: 1.5;
   resize: vertical;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .inspector-color-row .field-group {
@@ -1294,6 +1306,7 @@ select:focus-visible {
 .field-group textarea:focus,
 .field-group select:focus {
   border-color: #b8adf5;
+  box-shadow: 0 0 0 3px #7965e812;
 }
 
 .field-group input:disabled,
@@ -1435,6 +1448,54 @@ kbd {
 
   .editor-toolbar {
     padding: 0 12px;
+  }
+}
+
+@media (max-width: 850px) {
+  .editor-toolbar {
+    gap: 8px;
+  }
+
+  .toolbar-context > span:not(.context-icon):not(.mode-hint) {
+    display: none;
+  }
+
+  .toolbar-actions {
+    min-width: 0;
+    flex: 1;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toolbar-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbar-actions .toolbar-button {
+    flex: 0 0 auto;
+  }
+
+  .inspector {
+    position: absolute;
+    right: 12px;
+    bottom: 54px;
+    z-index: 3;
+    width: min(320px, calc(100vw - 82px));
+    max-height: 60vh;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    box-shadow: 0 12px 30px #302e4520;
+  }
+
+  .inspector-footer {
+    display: none;
+  }
+
+  .minimap-wrap {
+    right: auto;
+    left: 14px;
+    width: 160px;
   }
 }
 
