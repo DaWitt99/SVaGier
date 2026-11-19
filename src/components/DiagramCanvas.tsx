@@ -10,6 +10,7 @@ interface DiagramCanvasProps {
   settings: EditorSettings;
   camera: Camera;
   selectedNodeIds: string[];
+  nodesWithChildren: Set<string>;
   toolMode: "select" | "pan" | "freehand";
   connectMode: boolean;
   connectSourceId: string | null;
@@ -22,6 +23,7 @@ interface DiagramCanvasProps {
   onConnectNode: (id: string) => void;
   onCreateEdge: (fromId: string, toId: string) => void;
   onSelectEdge: (id: string | null) => void;
+  onToggleCollapse: (id: string) => void;
   onAddFreehand: (x: number, y: number, width: number, height: number, points: CurvePoint[]) => void;
   onEditPathPoint: (nodeId: string, index: number, handle: "anchor" | "controlIn" | "controlOut", point: Point) => void;
   onClearSelection: () => void;
@@ -119,9 +121,10 @@ interface DiagramNodeViewProps {
   selected: boolean;
   connectSource: boolean;
   showConnectHandles: boolean;
+  hasChildren: boolean;
 }
 
-const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectSource, showConnectHandles }: DiagramNodeViewProps) {
+const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectSource, showConnectHandles, hasChildren }: DiagramNodeViewProps) {
   const titleY = node.kind === "class" ? node.y + 30 : node.kind === "actor" ? node.y + node.height - 18 : node.y + node.height / 2 - 8;
   const detailY = node.kind === "class" ? node.y + 70 : node.kind === "actor" ? node.y + node.height - 2 : node.y + node.height / 2 + 18;
   const detailLines = node.detail.split("\n");
@@ -154,6 +157,12 @@ const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectS
           <path d="M 3 7 V 5 a3 3 0 0 1 6 0 v2" />
         </g>
       )}
+      {node.priority && <circle cx={node.x + node.width - 12} cy={node.y + 12} r="5" className={`node-priority-mark priority-${node.priority}`} aria-label={`Priorytet ${node.priority}`} />}
+      {node.labels && node.labels.length > 0 && <text x={node.x + node.width / 2} y={node.y + node.height - 7} className="node-label-line">{node.labels.slice(0, 2).join(" · ")}</text>}
+      {hasChildren && <g className="node-collapse-control" data-collapse-node-id={node.id} aria-label={node.collapsed ? "Rozwiń gałąź" : "Zwiń gałąź"}>
+        <circle cx={node.x + node.width - 4} cy={node.y - 3} r="10" />
+        <path d={node.collapsed ? `M ${node.x + node.width - 7} ${node.y - 3} H ${node.x + node.width - 1} M ${node.x + node.width - 4} ${node.y - 6} V ${node.y}` : `M ${node.x + node.width - 7} ${node.y - 3} H ${node.x + node.width - 1}`} />
+      </g>}
       {showConnectHandles && !node.locked && ports.map(([side, x, y]) => <circle key={side} cx={x} cy={y} r="7" className="connection-handle" data-connect-handle={side} />)}
     </g>
   );
@@ -165,13 +174,16 @@ interface DiagramEdgeViewProps {
   to: DiagramNode;
   nodes: DiagramNode[];
   selected: boolean;
+  selectable?: boolean;
+  className?: string;
+  stroke?: string;
 }
 
-const DiagramEdgeView = memo(function DiagramEdgeView({ edge, from, to, nodes, selected }: DiagramEdgeViewProps) {
+const DiagramEdgeView = memo(function DiagramEdgeView({ edge, from, to, nodes, selected, selectable = true, className, stroke }: DiagramEdgeViewProps) {
   const geometry = connectorGeometry(edge, from, to, nodes);
-  return <g data-edge-id={edge.id} className={`diagram-connection${selected ? " is-selected" : ""}`}>
-    <path d={geometry.d} className="diagram-edge-hit" />
-    <path d={geometry.d} className="diagram-edge" markerStart={edge.arrowStart ? "url(#arrowhead)" : undefined} markerEnd={edge.arrowEnd === false ? undefined : "url(#arrowhead)"} />
+  return <g data-edge-id={selectable ? edge.id : undefined} className={`diagram-connection${selected ? " is-selected" : ""}${className ? ` ${className}` : ""}`} pointerEvents={selectable ? undefined : "none"}>
+    {selectable && <path d={geometry.d} className="diagram-edge-hit" />}
+    <path d={geometry.d} className="diagram-edge" style={stroke ? { stroke } : undefined} markerStart={edge.arrowStart ? "url(#arrowhead)" : undefined} markerEnd={edge.arrowEnd === false ? undefined : "url(#arrowhead)"} />
     {edge.label && <text x={geometry.labelPoint.x} y={geometry.labelPoint.y - 8} className="edge-label">{edge.label}</text>}
   </g>;
 });
@@ -438,6 +450,13 @@ function MiniMap({ nodes, edges, camera, viewport, onCameraChange }: {
           return <line key={edge.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="minimap-edge" />;
         })}
         {nodes.map((node) => {
+          const parent = node.parentId ? mapNode.get(node.parentId) : null;
+          if (!parent) return null;
+          const a = worldToMini(parent.x + parent.width / 2, parent.y + parent.height / 2);
+          const b = worldToMini(node.x + node.width / 2, node.y + node.height / 2);
+          return <line key={`tree-${node.id}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="minimap-edge" />;
+        })}
+        {nodes.map((node) => {
           const point = worldToMini(node.x, node.y);
           return <rect key={node.id} x={point.x} y={point.y} width={Math.max(2, node.width * scale)} height={Math.max(2, node.height * scale)} rx="1.5" className="minimap-node" />;
         })}
@@ -460,6 +479,7 @@ export default function DiagramCanvas({
   settings,
   camera,
   selectedNodeIds,
+  nodesWithChildren,
   toolMode,
   connectMode,
   connectSourceId,
@@ -472,6 +492,7 @@ export default function DiagramCanvas({
   onConnectNode,
   onCreateEdge,
   onSelectEdge,
+  onToggleCollapse,
   onAddFreehand,
   onEditPathPoint,
   onClearSelection,
@@ -624,6 +645,13 @@ export default function DiagramCanvas({
       event.currentTarget.setPointerCapture(event.pointerId);
       dragRef.current = { type: "connect", pointerId: event.pointerId, fromId: nodeId, start };
       setConnectionPreview({ start, end: start });
+      return;
+    }
+    const collapseNodeId = target.closest("[data-collapse-node-id]")?.getAttribute("data-collapse-node-id");
+    if (collapseNodeId && event.button === 0) {
+      onSetSelection([collapseNodeId]);
+      onSelectEdge(null);
+      onToggleCollapse(collapseNodeId);
       return;
     }
     if (event.pointerType === "touch" && pointerPointsRef.current.size === 1 && !isGuideTarget && !isRulerTarget) {
@@ -1013,12 +1041,18 @@ export default function DiagramCanvas({
         <rect x={viewport.originX} y={viewport.originY} width={viewport.width} height={viewport.height} fill="#fbfbfe" data-canvas-background="true" />
         <rect x={viewport.originX} y={viewport.originY} width={viewport.width} height={viewport.height} fill="url(#grid-pattern)" data-canvas-background="true" />
         <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}>
+          {nodes.map((node) => {
+            const parent = node.parentId ? nodeById.get(node.parentId) : null;
+            if (!parent) return null;
+            const edge: DiagramEdge = { id: `tree-${node.id}`, from: parent.id, to: node.id, connectorKind: "curve", autoRoute: false, arrowEnd: false };
+            return <DiagramEdgeView key={edge.id} edge={edge} from={parent} to={node} nodes={nodes} selected={false} selectable={false} className="mindmap-branch" stroke={node.stroke ?? "#bdb6da"} />;
+          })}
           {edges.map((edge) => {
             const from = nodeById.get(edge.from);
             const to = nodeById.get(edge.to);
             return from && to ? <DiagramEdgeView key={edge.id} edge={edge} from={from} to={to} nodes={nodes} selected={selectedEdgeId === edge.id} /> : null;
           })}
-          {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeIds.includes(node.id)} connectSource={node.id === connectSourceId} showConnectHandles={connectMode} />)}
+          {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeIds.includes(node.id)} connectSource={node.id === connectSourceId} showConnectHandles={connectMode} hasChildren={nodesWithChildren.has(node.id)} />)}
           {freehandPreview.length > 1 && <path d={bezierPath(freehandPreview)} className="freehand-preview" />}
           {connectionPreview && <path d={`M ${connectionPreview.start.x} ${connectionPreview.start.y} L ${connectionPreview.end.x} ${connectionPreview.end.y}`} className="connection-preview" />}
         </g>

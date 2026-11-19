@@ -585,6 +585,156 @@ select:focus-visible {
 
 .shape-library-panel > footer svg { flex: 0 0 auto; color: #8d7be8; }
 
+.outline-panel {
+  position: absolute;
+  top: 32px;
+  left: 32px;
+  z-index: 4;
+  display: flex;
+  width: min(330px, calc(100% - 64px));
+  max-height: calc(100% - 64px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e6e5ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 14px 38px #302e4526;
+}
+
+.outline-panel-header {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #efeff4;
+}
+
+.outline-panel-header h2 {
+  margin: 4px 0 0;
+  color: #3a394d;
+  font-size: 14px;
+}
+
+.outline-layouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #f0eff5;
+}
+
+.outline-layouts button {
+  min-height: 27px;
+  padding: 0 8px;
+  border: 1px solid #e9e8f0;
+  border-radius: 7px;
+  background: #fff;
+  color: #77758a;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.outline-layouts button:hover,
+.outline-layouts button.active {
+  border-color: #dcd5fb;
+  background: #f4f1ff;
+  color: var(--purple-dark);
+}
+
+.outline-tree {
+  min-height: 80px;
+  flex: 1;
+  overflow: auto;
+  padding: 7px 8px;
+  scrollbar-width: thin;
+}
+
+.outline-row {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 3px;
+  border-radius: 7px;
+  cursor: grab;
+}
+
+.outline-row:active { cursor: grabbing; }
+.outline-row.is-selected { background: #f2efff; }
+
+.outline-collapse,
+.outline-collapse-spacer {
+  display: grid;
+  width: 23px;
+  height: 25px;
+  flex: 0 0 23px;
+  place-items: center;
+}
+
+.outline-collapse {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #89879b;
+  cursor: pointer;
+}
+
+.outline-collapse:hover { background: #e9e5fb; color: var(--purple-dark); }
+
+.outline-node-select {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #5d5b72;
+  cursor: pointer;
+  text-align: left;
+}
+
+.outline-row.is-selected .outline-node-select { color: #45399c; font-weight: 650; }
+.outline-node-title { min-width: 0; flex: 1; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.outline-priority { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: transparent; }
+.outline-priority[data-priority="low"] { background: #6fa8d8; }
+.outline-priority[data-priority="medium"] { background: #e2a843; }
+.outline-priority[data-priority="high"] { background: #df6a72; }
+.outline-label { max-width: 76px; overflow: hidden; padding: 2px 5px; border-radius: 5px; background: #f2f0f8; color: #89869e; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.outline-note-dot,
+.outline-comment-dot,
+.outline-link-dot { width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; }
+.outline-note-dot { background: #8f7ae5; }
+.outline-comment-dot { background: #e2a843; }
+.outline-link-dot { background: #63a7bd; }
+
+.outline-panel-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 9px 12px;
+  border-top: 1px solid #efeff4;
+  color: #9290a3;
+  font-size: 9px;
+}
+
+.outline-panel-footer span { display: inline-flex; align-items: center; gap: 4px; }
+.outline-panel-footer small { flex-basis: 100%; font-size: 9px; }
+
+.mindmap-branch .diagram-edge { stroke-width: 2.5; opacity: 0.9; }
+.node-priority-mark { stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.priority-low { fill: #6fa8d8; }
+.priority-medium { fill: #e2a843; }
+.priority-high { fill: #df6a72; }
+.node-label-line { fill: #88859a; font-size: 9px; text-anchor: middle; pointer-events: none; }
+.node-collapse-control { cursor: pointer; pointer-events: all; }
+.node-collapse-control circle { fill: #fff; stroke: #9a8be8; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.node-collapse-control path { fill: none; stroke: #705bd9; stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+
 .canvas-settings-heading,
 .settings-section-heading {
   display: flex;
@@ -1628,6 +1778,13 @@ kbd {
   }
 
   .shape-library-panel {
+    top: 20px;
+    left: 20px;
+    width: min(330px, calc(100% - 40px));
+    max-height: calc(100% - 40px);
+  }
+
+  .outline-panel {
     top: 20px;
     left: 20px;
     width: min(330px, calc(100% - 40px));

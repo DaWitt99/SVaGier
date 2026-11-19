@@ -21,10 +21,12 @@ import {
 } from "lucide-react";
 import DiagramCanvas from "./components/DiagramCanvas";
 import CanvasSettingsPanel from "./components/CanvasSettingsPanel";
+import OutlinePanel from "./components/OutlinePanel";
 import ShapeLibraryPanel from "./components/ShapeLibraryPanel";
 import { downloadSvg } from "./exportSvg";
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./components/DiagramCanvas";
-import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type EditorSettings, type GuideAxis, type ShapeKind } from "./model";
+import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type EditorSettings, type GuideAxis, type MindMapLayout, type ShapeKind } from "./model";
+import { getVisibleMindMapNodes, layoutMindMap } from "./mindmapLayout";
 
 const STORAGE_KEY = "svagier.document.v1";
 
@@ -35,8 +37,26 @@ function loadDocument(): DiagramDocument {
     const parsed = JSON.parse(stored) as Partial<DiagramDocument>;
     if (typeof parsed.title === "string" && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
       const editor = { ...defaultEditorSettings, ...(parsed.editor ?? {}) } as EditorSettings;
+      const starterIds = new Set(["idea", "mindmaps", "engineering", "uml", "export"]);
+      const starterBranches = new Set(parsed.edges
+        .filter((edge) => edge.from === "idea" && edge.to !== "idea" && starterIds.has(edge.to))
+        .map((edge) => edge.to));
+      const starterNodes = parsed.nodes.filter((node) => starterIds.has(node.id));
+      const isLegacyStarterMap = starterNodes.length === starterIds.size
+        && starterNodes.every((node) => !node.parentId)
+        && starterBranches.size === starterIds.size - 1;
+      const nodes = isLegacyStarterMap
+        ? parsed.nodes.map((node) => node.id === "idea" || !starterIds.has(node.id) ? node : {
+            ...node,
+            parentId: "idea",
+            siblingOrder: ["mindmaps", "engineering", "uml", "export"].indexOf(node.id),
+          })
+        : parsed.nodes;
+      const edges = isLegacyStarterMap ? parsed.edges.filter((edge) => !(edge.from === "idea" && starterBranches.has(edge.to))) : parsed.edges;
       return {
         ...parsed,
+        nodes,
+        edges,
         editor: {
           ...editor,
           guides: Array.isArray(editor.guides) ? editor.guides : [],
@@ -59,6 +79,7 @@ function App() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(["idea"]);
   const [toolMode, setToolMode] = useState<"select" | "pan" | "freehand">("select");
   const [showShapeLibrary, setShowShapeLibrary] = useState(false);
+  const [showOutline, setShowOutline] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [connectMode, setConnectMode] = useState(false);
@@ -78,6 +99,14 @@ function App() {
     () => document.edges.find((edge) => edge.id === selectedEdgeId) ?? null,
     [document.edges, selectedEdgeId],
   );
+  const visibleNodes = useMemo(() => getVisibleMindMapNodes(document.nodes), [document.nodes]);
+  const { nodesWithChildren, treeBranchCount } = useMemo(() => {
+    const nodeIds = new Set(document.nodes.map((node) => node.id));
+    const parents = new Set<string>();
+    let count = 0;
+    for (const node of document.nodes) if (node.parentId && nodeIds.has(node.parentId)) { parents.add(node.parentId); count++; }
+    return { nodesWithChildren: parents, treeBranchCount: count };
+  }, [document.nodes]);
 
   useEffect(() => {
     setSaved(false);
@@ -143,22 +172,27 @@ function App() {
 
   useEffect(() => {
     function handleHistoryShortcut(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      const target = event.target as Element | null;
+      if (target?.closest("input, textarea, select, button, [contenteditable='true']")) return;
       const command = event.metaKey || event.ctrlKey;
-      if (!command) return;
-      if (event.key.toLowerCase() === "z") {
+      if (command && event.key.toLowerCase() === "z") {
         event.preventDefault();
         if (event.shiftKey) redo();
         else undo();
-      } else if (event.key.toLowerCase() === "y") {
+      } else if (command && event.key.toLowerCase() === "y") {
         event.preventDefault();
         redo();
+      } else if (!command && !event.altKey && !event.shiftKey && event.key === "Tab" && selectedNode) {
+        event.preventDefault();
+        addChildNode(selectedNode.id);
+      } else if (!command && !event.altKey && !event.shiftKey && event.key === "Enter" && selectedNode) {
+        event.preventDefault();
+        addSiblingNode(selectedNode.id);
       }
     }
     window.addEventListener("keydown", handleHistoryShortcut);
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
-  }, []);
+  }, [selectedNode?.id]);
 
   function updateNode(id: string, updates: Partial<DiagramNode>) {
     updateDocument((current) => ({
@@ -285,6 +319,115 @@ function App() {
     setConnectSourceId(null);
   }
 
+  function addBranchNode(referenceId: string, relation: "child" | "sibling") {
+    const id = `branch-${crypto.randomUUID()}`;
+    let created = false;
+    updateDocument((current) => {
+      const reference = current.nodes.find((node) => node.id === referenceId);
+      if (!reference || reference.locked) return current;
+      const parentId = relation === "child" ? reference.id : reference.parentId;
+      const siblings = current.nodes
+        .filter((node) => node.parentId === parentId)
+        .sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+      const referenceIndex = relation === "sibling"
+        ? current.nodes.filter((node) => node.parentId === parentId).sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0)).findIndex((node) => node.id === reference.id)
+        : siblings.length;
+      const insertIndex = relation === "child" ? siblings.length : Math.max(0, referenceIndex + 1);
+      const newNode: DiagramNode = {
+        id,
+        kind: "process",
+        x: relation === "child" ? reference.x + reference.width + 90 : reference.x,
+        y: relation === "child" ? reference.y + insertIndex * 24 : reference.y + reference.height + 54,
+        width: 196,
+        height: 84,
+        title: "Nowa gałąź",
+        detail: "",
+        parentId,
+        siblingOrder: insertIndex,
+        fill: reference.fill,
+        stroke: reference.stroke,
+        textColor: reference.textColor,
+      };
+      const orderById = new Map<string, number>();
+      const orderedSiblings = siblings.slice();
+      orderedSiblings.splice(insertIndex, 0, newNode);
+      orderedSiblings.forEach((node, index) => orderById.set(node.id, index));
+      const nodes = current.nodes.map((node) => {
+        if (node.id === reference.id && relation === "child") return { ...node, collapsed: false };
+        const order = orderById.get(node.id);
+        return order === undefined ? node : { ...node, siblingOrder: order };
+      }).concat(newNode);
+      created = true;
+      return { ...current, nodes: layoutMindMap(nodes, current.editor.mindmapLayout) };
+    });
+    if (!created) return;
+    setSelectedNodeIds([id]);
+    setSelectedEdgeId(null);
+    setConnectMode(false);
+    setConnectSourceId(null);
+    setToolMode("select");
+  }
+
+  function addChildNode(parentId: string) {
+    addBranchNode(parentId, "child");
+  }
+
+  function addSiblingNode(nodeId: string) {
+    addBranchNode(nodeId, "sibling");
+  }
+
+  function toggleBranchCollapsed(nodeId: string) {
+    const node = documentRef.current.nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    const descendants = new Set<string>();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const candidate of documentRef.current.nodes) {
+        if (candidate.parentId === nodeId || (candidate.parentId && descendants.has(candidate.parentId))) {
+          if (!descendants.has(candidate.id)) { descendants.add(candidate.id); changed = true; }
+        }
+      }
+    }
+    updateNode(nodeId, { collapsed: !node.collapsed });
+    setSelectedNodeIds((ids) => ids.some((id) => descendants.has(id)) || !ids.includes(nodeId) ? [nodeId] : ids);
+    setSelectedEdgeId(null);
+  }
+
+  function changeMindMapLayout(layout: MindMapLayout) {
+    updateDocument((current) => ({
+      ...current,
+      nodes: layoutMindMap(current.nodes, layout),
+      editor: { ...current.editor, mindmapLayout: layout },
+    }));
+  }
+
+  function reorderMindMapSibling(nodeId: string, targetId: string, after: boolean) {
+    updateDocument((current) => {
+      const source = current.nodes.find((node) => node.id === nodeId);
+      const target = current.nodes.find((node) => node.id === targetId);
+      if (!source || !target || source.parentId !== target.parentId || source.id === target.id) return current;
+      const siblings = current.nodes
+        .filter((node) => node.parentId === source.parentId)
+        .sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+      const reordered = siblings.filter((node) => node.id !== source.id);
+      const targetIndex = reordered.findIndex((node) => node.id === target.id);
+      if (targetIndex < 0) return current;
+      if (source.locked || target.locked) return current;
+      reordered.splice(targetIndex + (after ? 1 : 0), 0, source);
+      const originalSlots = siblings.map((node) => ({ x: node.x, y: node.y }));
+      const orderById = new Map(reordered.map((node, index) => [node.id, { order: index, position: originalSlots[index] }]));
+      const nodes = current.nodes.map((node) => {
+        const entry = orderById.get(node.id);
+        if (!entry) return node;
+        return current.editor.mindmapLayout === "manual"
+          ? { ...node, siblingOrder: entry.order, ...entry.position }
+          : { ...node, siblingOrder: entry.order };
+      });
+      return { ...current, nodes: layoutMindMap(nodes, current.editor.mindmapLayout) };
+    });
+  }
+
   function addImage(data: string, fileName: string) {
     const id = `image-${crypto.randomUUID()}`;
     const node: DiagramNode = {
@@ -398,11 +541,23 @@ function App() {
   function removeSelectedNode() {
     const removedIds = new Set(selectedNodes.filter((node) => !node.locked).map((node) => node.id));
     if (removedIds.size === 0) return;
-    updateDocument((current) => ({
-      ...current,
-      nodes: current.nodes.filter((node) => !removedIds.has(node.id)),
-      edges: current.edges.filter((edge) => !removedIds.has(edge.from) && !removedIds.has(edge.to)),
-    }));
+    updateDocument((current) => {
+      const nodes = current.nodes.filter((node) => !removedIds.has(node.id)).map((node) => {
+        if (!node.parentId || !removedIds.has(node.parentId)) return node;
+        let parentId: string | undefined = node.parentId;
+        const seen = new Set<string>();
+        while (parentId && removedIds.has(parentId) && !seen.has(parentId)) {
+          seen.add(parentId);
+          parentId = current.nodes.find((candidate) => candidate.id === parentId)?.parentId;
+        }
+        return { ...node, parentId, siblingOrder: undefined };
+      });
+      return {
+        ...current,
+        nodes: layoutMindMap(nodes, current.editor.mindmapLayout),
+        edges: current.edges.filter((edge) => !removedIds.has(edge.from) && !removedIds.has(edge.to)),
+      };
+    });
     setSelectedNodeIds((ids) => ids.filter((id) => !removedIds.has(id)));
   }
 
@@ -579,7 +734,11 @@ function App() {
               {connectMode && <span className="mode-hint">{connectSourceId ? "Wybierz drugi element" : "Wybierz pierwszy element"}</span>}
             </div>
             <div className="toolbar-actions">
-              <button className={`toolbar-button${showShapeLibrary ? " selected" : ""}`} type="button" aria-label="Otwórz bibliotekę kształtów" title="Biblioteka kształtów i symboli" aria-expanded={showShapeLibrary} onClick={() => setShowShapeLibrary((current) => { if (!current) setShowCanvasSettings(false); return !current; })}>
+              <button className={`toolbar-button${showOutline ? " selected" : ""}`} type="button" aria-label="Otwórz konspekt mapy" title="Konspekt i układy mapy myśli" aria-expanded={showOutline} onClick={() => setShowOutline((current) => { if (!current) { setShowShapeLibrary(false); setShowCanvasSettings(false); } return !current; })}>
+                <Layers size={16} />
+                <span>Konspekt</span>
+              </button>
+              <button className={`toolbar-button${showShapeLibrary ? " selected" : ""}`} type="button" aria-label="Otwórz bibliotekę kształtów" title="Biblioteka kształtów i symboli" aria-expanded={showShapeLibrary} onClick={() => setShowShapeLibrary((current) => { if (!current) { setShowCanvasSettings(false); setShowOutline(false); } return !current; })}>
                 <Shapes size={16} />
                 <span>Kształty</span>
               </button>
@@ -621,7 +780,7 @@ function App() {
                 aria-label="Ustawienia widoku"
                 title="Ustawienia widoku"
                 aria-expanded={showCanvasSettings}
-                onClick={() => setShowCanvasSettings((current) => { if (!current) setShowShapeLibrary(false); return !current; })}
+                onClick={() => setShowCanvasSettings((current) => { if (!current) { setShowShapeLibrary(false); setShowOutline(false); } return !current; })}
               >
                 <SlidersHorizontal size={15} />
                 <span>Widok</span>
@@ -632,6 +791,9 @@ function App() {
           {selectedNodeIds.length > 0 && (
             <div className="selection-toolbar" role="toolbar" aria-label="Narzędzia zaznaczania i układania">
               <span className="selection-toolbar-count">{selectedNodeIds.length} zazn.</span>
+              <button type="button" disabled={!selectedNode || selectedNode.locked} title="Dodaj podgałąź (Tab)" onClick={() => selectedNode && addChildNode(selectedNode.id)}>+ Podgałąź</button>
+              <button type="button" disabled={!selectedNode || selectedNode.locked} title="Dodaj element na tym samym poziomie (Enter)" onClick={() => selectedNode && addSiblingNode(selectedNode.id)}>+ Ten sam poziom</button>
+              <span className="selection-toolbar-divider" />
               <button type="button" disabled={movableSelectionCount < 2} title="Grupuj zaznaczone elementy" onClick={groupSelected}>Grupuj</button>
               <button type="button" disabled={!groupedSelection} title="Rozgrupuj zaznaczone elementy" onClick={ungroupSelected}>Rozgrupuj</button>
               <span className="selection-toolbar-divider" />
@@ -660,11 +822,12 @@ function App() {
 
           <section className="canvas-stage" aria-label="Obszar roboczy">
             <DiagramCanvas
-              nodes={document.nodes}
+              nodes={visibleNodes}
               edges={document.edges}
               settings={document.editor}
               camera={camera}
               selectedNodeIds={selectedNodeIds}
+              nodesWithChildren={nodesWithChildren}
               toolMode={toolMode}
               connectMode={connectMode}
               connectSourceId={connectSourceId}
@@ -677,12 +840,25 @@ function App() {
               onConnectNode={handleConnectNode}
               onCreateEdge={createEdge}
               onSelectEdge={setSelectedEdgeId}
+              onToggleCollapse={toggleBranchCollapsed}
               onAddFreehand={addFreehand}
               onEditPathPoint={editPathPoint}
               onClearSelection={() => setSelectedNodeIds([])}
               onAddGuide={addGuide}
               onMoveGuide={moveGuide}
             />
+            {showOutline && (
+              <OutlinePanel
+                nodes={document.nodes}
+                selectedNodeIds={selectedNodeIds}
+                layout={document.editor.mindmapLayout}
+                onSelect={(id) => { setSelectedNodeIds([id]); setSelectedEdgeId(null); }}
+                onToggleCollapse={toggleBranchCollapsed}
+                onLayoutChange={changeMindMapLayout}
+                onReorder={reorderMindMapSibling}
+                onClose={() => setShowOutline(false)}
+              />
+            )}
             {showShapeLibrary && (
               <ShapeLibraryPanel
                 onAdd={(kind, title, width, height) => {
@@ -715,7 +891,7 @@ function App() {
             <div className="canvas-status">
               <span>{document.nodes.length} elementów</span>
               <span className="status-dot" />
-              <span>{document.edges.length} połączeń</span>
+              <span>{document.edges.length + treeBranchCount} połączeń</span>
             </div>
           </section>
         </main>
@@ -752,6 +928,30 @@ function App() {
                   disabled={selectedNode.locked}
                   onChange={(event) => updateNode(selectedNode.id, { detail: event.target.value })}
                 />
+              </div>
+              <div className="field-group">
+                <label htmlFor="node-labels">Etykiety</label>
+                <input
+                  id="node-labels"
+                  value={selectedNode.labels?.join(", ") ?? ""}
+                  placeholder="np. Badania, Etap 1"
+                  disabled={selectedNode.locked}
+                  onChange={(event) => updateNode(selectedNode.id, { labels: [...new Set(event.target.value.split(/[,;\n]/).map((label) => label.trim()).filter(Boolean))] })}
+                />
+              </div>
+              <label className="settings-field">
+                <span>Priorytet</span>
+                <select value={selectedNode.priority ?? ""} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { priority: event.target.value ? event.target.value as DiagramNode["priority"] : undefined })}>
+                  <option value="">Brak</option><option value="low">Niski</option><option value="medium">Średni</option><option value="high">Wysoki</option>
+                </select>
+              </label>
+              <div className="field-group">
+                <label htmlFor="node-notes">Notatki</label>
+                <textarea id="node-notes" rows={3} value={selectedNode.notes ?? ""} disabled={selectedNode.locked} placeholder="Dodatkowe informacje…" onChange={(event) => updateNode(selectedNode.id, { notes: event.target.value })} />
+              </div>
+              <div className="field-group">
+                <label htmlFor="node-comments">Komentarze</label>
+                <textarea id="node-comments" rows={3} value={selectedNode.comments ?? ""} disabled={selectedNode.locked} placeholder="Komentarz do węzła…" onChange={(event) => updateNode(selectedNode.id, { comments: event.target.value })} />
               </div>
               {selectedNode.kind !== "image" && selectedNode.kind !== "freehand" && <div className="field-group">
                 <label htmlFor="node-shape">Kształt</label>

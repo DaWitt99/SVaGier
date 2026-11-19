@@ -1,4 +1,6 @@
 export type ShapeKind = "process" | "decision" | "class" | "ellipse" | "line" | "text" | "database" | "document" | "actor" | "freehand" | "image";
+export type MindMapLayout = "manual" | "tree" | "radial" | "horizontal";
+export type NodePriority = "low" | "medium" | "high";
 
 export interface CurvePoint {
   x: number;
@@ -19,6 +21,13 @@ export interface DiagramNode {
   rotation?: number;
   locked?: boolean;
   groupId?: string;
+  parentId?: string;
+  siblingOrder?: number;
+  collapsed?: boolean;
+  labels?: string[];
+  priority?: NodePriority;
+  notes?: string;
+  comments?: string;
   fill?: string;
   stroke?: string;
   strokeWidth?: number;
@@ -78,6 +87,7 @@ export interface EditorSettings {
   showMinimap: boolean;
   guides: Guide[];
   savedViews: SavedView[];
+  mindmapLayout: MindMapLayout;
 }
 
 export interface DiagramDocument {
@@ -97,6 +107,7 @@ export const defaultEditorSettings: EditorSettings = {
   showMinimap: true,
   guides: [],
   savedViews: [],
+  mindmapLayout: "manual",
 };
 
 export const initialDocument: DiagramDocument = {
@@ -122,6 +133,8 @@ export const initialDocument: DiagramDocument = {
       height: 96,
       title: "Mapy myśli",
       detail: "swobodne łączenie idei",
+      parentId: "idea",
+      siblingOrder: 0,
     },
     {
       id: "engineering",
@@ -132,6 +145,8 @@ export const initialDocument: DiagramDocument = {
       height: 96,
       title: "Rysunki techniczne",
       detail: "siatka i precyzyjne wymiary",
+      parentId: "idea",
+      siblingOrder: 1,
     },
     {
       id: "uml",
@@ -142,6 +157,8 @@ export const initialDocument: DiagramDocument = {
       height: 124,
       title: "Diagram UML",
       detail: "+ atrybuty\n+ metody",
+      parentId: "idea",
+      siblingOrder: 2,
     },
     {
       id: "export",
@@ -152,12 +169,9 @@ export const initialDocument: DiagramDocument = {
       height: 108,
       title: "Eksport SVG",
       detail: "edytowalny wektor",
+      parentId: "idea",
+      siblingOrder: 3,
     },
   ],
-  edges: [
-    { id: "edge-idea-mindmaps", from: "idea", to: "mindmaps" },
-    { id: "edge-idea-engineering", from: "idea", to: "engineering" },
-    { id: "edge-idea-uml", from: "idea", to: "uml" },
-    { id: "edge-idea-export", from: "idea", to: "export" },
-  ],
+  edges: [],
 };
