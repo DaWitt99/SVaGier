@@ -1,7 +1,8 @@
 import { memo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
-import type { Camera, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, MeasurementUnit } from "../model";
+import type { Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, MeasurementUnit } from "../model";
 import { formatMeasurement } from "../units";
+import { bezierPath, connectorGeometry, nodeBounds, nodeCenter, smoothCurve, type Point } from "../geometry";
 
 interface DiagramCanvasProps {
   nodes: DiagramNode[];
@@ -9,15 +10,20 @@ interface DiagramCanvasProps {
   settings: EditorSettings;
   camera: Camera;
   selectedNodeIds: string[];
-  toolMode: "select" | "pan";
+  toolMode: "select" | "pan" | "freehand";
   connectMode: boolean;
   connectSourceId: string | null;
+  selectedEdgeId: string | null;
   onCameraChange: (camera: Camera) => void;
   onSetSelection: (ids: string[]) => void;
   onMoveNodes: (updates: Partial<DiagramNode>[]) => void;
   onBeginHistoryAction: () => void;
   onEndHistoryAction: () => void;
   onConnectNode: (id: string) => void;
+  onCreateEdge: (fromId: string, toId: string) => void;
+  onSelectEdge: (id: string | null) => void;
+  onAddFreehand: (x: number, y: number, width: number, height: number, points: CurvePoint[]) => void;
+  onEditPathPoint: (nodeId: string, index: number, handle: "anchor" | "controlIn" | "controlOut", point: Point) => void;
   onClearSelection: () => void;
   onAddGuide: (axis: GuideAxis, position: number) => string;
   onMoveGuide: (id: string, position: number) => void;
@@ -35,7 +41,10 @@ type DragSession =
   | { type: "guide"; pointerId: number; guideId: string; axis: GuideAxis }
   | { type: "marquee"; pointerId: number; start: ScreenPoint; current: ScreenPoint; additive: boolean; baseSelection: string[] }
   | { type: "resize"; pointerId: number; start: ScreenPoint; handle: string; nodes: DiagramNode[]; bounds: WorldBounds }
-  | { type: "rotate"; pointerId: number; nodes: DiagramNode[]; pivot: ScreenPoint; startAngle: number };
+  | { type: "rotate"; pointerId: number; nodes: DiagramNode[]; pivot: ScreenPoint; startAngle: number }
+  | { type: "connect"; pointerId: number; fromId: string; start: ScreenPoint }
+  | { type: "freehand"; pointerId: number; points: ScreenPoint[] }
+  | { type: "path-handle"; pointerId: number; nodeId: string; index: number; handle: "anchor" | "controlIn" | "controlOut" };
 
 interface ScreenPoint {
   x: number;
@@ -65,27 +74,57 @@ function shapeFor(node: DiagramNode) {
       `${node.x + node.width / 2},${node.y + node.height}`,
       `${node.x},${node.y + node.height / 2}`,
     ].join(" ");
-    return <polygon points={points} className="node-shape decision-shape" />;
+    return <polygon points={points} className="node-shape decision-shape" style={shapeStyle(node)} />;
   }
-
+  if (node.kind === "ellipse") return <ellipse cx={node.x + node.width / 2} cy={node.y + node.height / 2} rx={node.width / 2} ry={node.height / 2} className="node-shape" style={shapeStyle(node)} />;
+  if (node.kind === "line") return <line x1={node.x} y1={node.y + node.height / 2} x2={node.x + node.width} y2={node.y + node.height / 2} className="standalone-line" style={{ stroke: node.stroke ?? "#8071d9", strokeWidth: node.strokeWidth ?? 2 }} />;
+  if (node.kind === "text" || node.kind === "freehand" || node.kind === "image") {
+    if (node.kind === "freehand") return <path d={bezierPath(node.pathPoints ?? [])} transform={`translate(${node.x} ${node.y})`} className="freehand-shape" style={{ stroke: node.stroke ?? "#5e50b4", strokeWidth: node.strokeWidth ?? 3 }} />;
+    if (node.kind === "image") return <><rect x={node.x} y={node.y} width={node.width} height={node.height} rx="6" className="image-frame" /><image x={node.x} y={node.y} width={node.width} height={node.height} href={node.imageData ?? node.imageSrc ?? ""} preserveAspectRatio="xMidYMid meet" /></>;
+    return null;
+  }
+  if (node.kind === "database") {
+    return <g className="node-shape" style={shapeStyle(node)}><path d={`M ${node.x} ${node.y + 18} V ${node.y + node.height - 18} C ${node.x} ${node.y + node.height + 2}, ${node.x + node.width} ${node.y + node.height + 2}, ${node.x + node.width} ${node.y + node.height - 18} V ${node.y + 18}`} /><ellipse cx={node.x + node.width / 2} cy={node.y + 18} rx={node.width / 2} ry="18" /><path d={`M ${node.x} ${node.y + 18} C ${node.x} ${node.y + 42}, ${node.x + node.width} ${node.y + 42}, ${node.x + node.width} ${node.y + 18}`} className="database-rim" /></g>;
+  }
+  if (node.kind === "document") {
+    return <path d={`M ${node.x} ${node.y} H ${node.x + node.width} V ${node.y + node.height - 14} Q ${node.x + node.width * 0.75} ${node.y + node.height + 8} ${node.x + node.width / 2} ${node.y + node.height - 8} Q ${node.x + node.width * 0.25} ${node.y + node.height - 24} ${node.x} ${node.y + node.height - 10} Z`} className="node-shape" style={shapeStyle(node)} />;
+  }
+  if (node.kind === "actor") {
+    const cx = node.x + node.width / 2;
+    const legEnd = node.y + node.height - 38;
+    return <g className="actor-symbol" style={{ stroke: node.stroke ?? "#8c7ce0" }}><circle cx={cx} cy={node.y + 24} r="14" /><path d={`M ${cx} ${node.y + 38} V ${node.y + 72} M ${cx - 26} ${node.y + 50} H ${cx + 26} M ${cx} ${node.y + 72} L ${cx - 22} ${legEnd} M ${cx} ${node.y + 72} L ${cx + 22} ${legEnd}`} /></g>;
+  }
   return (
     <>
-      <rect x={node.x} y={node.y} width={node.width} height={node.height} rx={node.kind === "class" ? 12 : 16} className="node-shape" />
+      <rect x={node.x} y={node.y} width={node.width} height={node.height} rx={node.kind === "class" ? 12 : 16} className="node-shape" style={shapeStyle(node)} />
       {node.kind === "class" && <path d={`M ${node.x} ${node.y + 48} H ${node.x + node.width}`} className="class-divider" />}
     </>
   );
+}
+
+function shapeStyle(node: DiagramNode) {
+  return { fill: node.fill ?? (node.kind === "decision" ? "#fbfaff" : "#fff"), stroke: node.stroke ?? "#d8d8e7", strokeWidth: node.strokeWidth ?? 1.5 };
 }
 
 interface DiagramNodeViewProps {
   node: DiagramNode;
   selected: boolean;
   connectSource: boolean;
+  showConnectHandles: boolean;
 }
 
-const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectSource }: DiagramNodeViewProps) {
-  const titleY = node.kind === "class" ? node.y + 30 : node.y + node.height / 2 - 8;
-  const detailY = node.kind === "class" ? node.y + 70 : node.y + node.height / 2 + 18;
+const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectSource, showConnectHandles }: DiagramNodeViewProps) {
+  const titleY = node.kind === "class" ? node.y + 30 : node.kind === "actor" ? node.y + node.height - 18 : node.y + node.height / 2 - 8;
+  const detailY = node.kind === "class" ? node.y + 70 : node.kind === "actor" ? node.y + node.height - 2 : node.y + node.height / 2 + 18;
   const detailLines = node.detail.split("\n");
+  const textNodeLines = [...node.title.split("\n"), ...(node.detail ? node.detail.split("\n") : [])];
+  const textAnchor = node.textAlign === "left" ? "start" : node.textAlign === "right" ? "end" : "middle";
+  const textX = node.textAlign === "left" ? node.x + 12 : node.textAlign === "right" ? node.x + node.width - 12 : node.x + node.width / 2;
+  const textStyle = { fill: node.textColor ?? "#302f43", fontSize: node.fontSize ?? 15, fontWeight: node.fontWeight ?? (node.kind === "text" ? "normal" : "650"), fontStyle: node.fontStyle ?? "normal", textAnchor } as const;
+  const ports = [
+    ["top", node.x + node.width / 2, node.y], ["right", node.x + node.width, node.y + node.height / 2],
+    ["bottom", node.x + node.width / 2, node.y + node.height], ["left", node.x, node.y + node.height / 2],
+  ] as const;
   return (
     <g
       data-node-id={node.id}
@@ -97,31 +136,36 @@ const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectS
       aria-pressed={selected}
     >
       {shapeFor(node)}
-      <text x={node.x + node.width / 2} y={titleY} className="node-title">{node.title}</text>
-      <text x={node.x + node.width / 2} y={detailY} className="node-detail">
-        {detailLines.map((line, index) => <tspan key={`${node.id}-detail-${index}`} x={node.x + node.width / 2} dy={index === 0 ? 0 : 18}>{line}</tspan>)}
-      </text>
+      {node.kind === "text" ? <text x={textX} y={node.y + (node.fontSize ?? 18)} className="text-node-content" style={textStyle}>{textNodeLines.map((line, index) => <tspan key={`${node.id}-text-${index}`} x={textX} dy={index === 0 ? 0 : (node.fontSize ?? 18) * 1.25}>{line}</tspan>)}</text> : node.kind !== "image" && node.kind !== "freehand" && node.kind !== "line" && node.title && <text x={textX} y={titleY} className="node-title" style={textStyle}>{node.title}</text>}
+      {node.kind !== "text" && node.kind !== "image" && node.kind !== "freehand" && node.kind !== "line" && <text x={textX} y={detailY} className="node-detail" style={{ ...textStyle, fill: node.textColor ?? "#858398", fontSize: node.fontSize ? Math.max(9, node.fontSize - 4) : 11 }}>
+        {detailLines.map((line, index) => <tspan key={`${node.id}-detail-${index}`} x={textX} dy={index === 0 ? 0 : 18}>{line}</tspan>)}
+      </text>}
       {node.locked && (
         <g className="node-lock-mark" transform={`translate(${node.x + node.width - 20} ${node.y + 8})`} aria-hidden="true">
           <rect x="0" y="7" width="12" height="10" rx="2" />
           <path d="M 3 7 V 5 a3 3 0 0 1 6 0 v2" />
         </g>
       )}
+      {showConnectHandles && !node.locked && ports.map(([side, x, y]) => <circle key={side} cx={x} cy={y} r="7" className="connection-handle" data-connect-handle={side} />)}
     </g>
   );
 });
 
 interface DiagramEdgeViewProps {
+  edge: DiagramEdge;
   from: DiagramNode;
   to: DiagramNode;
+  nodes: DiagramNode[];
+  selected: boolean;
 }
 
-const DiagramEdgeView = memo(function DiagramEdgeView({ from, to }: DiagramEdgeViewProps) {
-  const x1 = from.x + from.width / 2;
-  const y1 = from.y + from.height / 2;
-  const x2 = to.x + to.width / 2;
-  const y2 = to.y + to.height / 2;
-  return <path d={`M ${x1} ${y1} L ${x2} ${y2}`} className="diagram-edge" markerEnd="url(#arrowhead)" />;
+const DiagramEdgeView = memo(function DiagramEdgeView({ edge, from, to, nodes, selected }: DiagramEdgeViewProps) {
+  const geometry = connectorGeometry(edge, from, to, nodes);
+  return <g data-edge-id={edge.id} className={`diagram-connection${selected ? " is-selected" : ""}`}>
+    <path d={geometry.d} className="diagram-edge-hit" />
+    <path d={geometry.d} className="diagram-edge" markerStart={edge.arrowStart ? "url(#arrowhead)" : undefined} markerEnd={edge.arrowEnd === false ? undefined : "url(#arrowhead)"} />
+    {edge.label && <text x={geometry.labelPoint.x} y={geometry.labelPoint.y - 8} className="edge-label">{edge.label}</text>}
+  </g>;
 });
 
 function clampZoom(zoom: number): number {
@@ -230,15 +274,7 @@ function GuideOverlays({ guides, camera }: { guides: Guide[]; camera: Camera }) 
 }
 
 function nodeWorldBounds(node: DiagramNode): WorldBounds {
-  const radians = ((node.rotation ?? 0) * Math.PI) / 180;
-  const width = Math.abs(node.width * Math.cos(radians)) + Math.abs(node.height * Math.sin(radians));
-  const height = Math.abs(node.width * Math.sin(radians)) + Math.abs(node.height * Math.cos(radians));
-  return {
-    left: node.x + node.width / 2 - width / 2,
-    top: node.y + node.height / 2 - height / 2,
-    width,
-    height,
-  };
+  return nodeBounds(node);
 }
 
 function boundsForNodes(nodes: DiagramNode[]): WorldBounds | null {
@@ -273,6 +309,39 @@ function SelectionOverlay({ bounds, camera }: { bounds: WorldBounds | null; came
       <circle cx={centerX} cy={rotationY} r={7 / camera.zoom} className="rotation-handle" data-rotate-handle="true" />
     </g>
   );
+}
+
+function rotatePoint(point: Point, center: Point, degrees: number): Point {
+  const radians = degrees * Math.PI / 180;
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return { x: center.x + dx * Math.cos(radians) - dy * Math.sin(radians), y: center.y + dx * Math.sin(radians) + dy * Math.cos(radians) };
+}
+
+function worldPathPoint(node: DiagramNode, point: Point): Point {
+  return rotatePoint({ x: node.x + point.x, y: node.y + point.y }, nodeCenter(node), node.rotation ?? 0);
+}
+
+function PathHandlesOverlay({ nodes, selectedNodeIds, camera }: { nodes: DiagramNode[]; selectedNodeIds: string[]; camera: Camera }) {
+  const size = 7 / camera.zoom;
+  const selected = nodes.filter((node) => selectedNodeIds.includes(node.id) && node.kind === "freehand" && !node.locked && node.pathPoints);
+  if (selected.length === 0) return null;
+  return <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`} className="path-handles-overlay">
+    {selected.flatMap((node) => (node.pathPoints ?? []).map((point, index) => {
+      const anchor = worldPathPoint(node, point);
+      const controls = [
+        ["controlIn", point.controlIn], ["controlOut", point.controlOut],
+      ] as const;
+      return <g key={`${node.id}-${index}`}>
+        {controls.map(([handle, control]) => {
+          if (!control) return null;
+          const world = worldPathPoint(node, control);
+          return <g key={handle}><line x1={anchor.x} y1={anchor.y} x2={world.x} y2={world.y} className="bezier-control-line" /><circle cx={world.x} cy={world.y} r={size / 2} className="bezier-control-handle" data-path-handle="true" data-path-node-id={node.id} data-path-index={index} data-path-kind={handle} /></g>;
+        })}
+        <circle cx={anchor.x} cy={anchor.y} r={size / 2} className="bezier-anchor-handle" data-path-handle="true" data-path-node-id={node.id} data-path-index={index} data-path-kind="anchor" />
+      </g>;
+    }))}
+  </g>;
 }
 
 function distance(a: ScreenPoint, b: ScreenPoint): number {
@@ -381,12 +450,17 @@ export default function DiagramCanvas({
   toolMode,
   connectMode,
   connectSourceId,
+  selectedEdgeId,
   onCameraChange,
   onSetSelection,
   onMoveNodes,
   onBeginHistoryAction,
   onEndHistoryAction,
   onConnectNode,
+  onCreateEdge,
+  onSelectEdge,
+  onAddFreehand,
+  onEditPathPoint,
   onClearSelection,
   onAddGuide,
   onMoveGuide,
@@ -396,6 +470,8 @@ export default function DiagramCanvas({
   const pointerPointsRef = useRef(new Map<number, ScreenPoint>());
   const pinchRef = useRef<PinchSession | null>(null);
   const [marquee, setMarquee] = useState<{ start: ScreenPoint; current: ScreenPoint } | null>(null);
+  const [connectionPreview, setConnectionPreview] = useState<{ start: Point; end: Point } | null>(null);
+  const [freehandPreview, setFreehandPreview] = useState<CurvePoint[]>([]);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const selectedNodes = nodes.filter((node) => selectedNodeIds.includes(node.id));
   const movableSelectedNodes = selectedNodes.filter((node) => !node.locked);
@@ -438,6 +514,7 @@ export default function DiagramCanvas({
       };
       dragRef.current = null;
       setMarquee(null);
+      setFreehandPreview([]);
     } else if (allowSelection) {
       const additive = event.shiftKey || event.ctrlKey || event.metaKey;
       dragRef.current = { type: "marquee", pointerId: event.pointerId, start: point, current: point, additive, baseSelection: selectedNodeIds };
@@ -489,11 +566,29 @@ export default function DiagramCanvas({
     dragRef.current = { type: "nodes", pointerId: event.pointerId, start, nodes: movable.map((item) => ({ ...item })) };
   }
 
+  function beginFreehand(event: ReactPointerEvent<SVGSVGElement>, point: ScreenPoint) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.pointerType === "touch") pointerPointsRef.current.set(event.pointerId, point);
+    dragRef.current = { type: "freehand", pointerId: event.pointerId, points: [point] };
+    setFreehandPreview([]);
+  }
+
   function handleCanvasPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
     const target = event.target as Element;
     if (event.pointerType !== "touch" && event.button !== 0 && event.button !== 1) return;
     const isGuideTarget = Boolean(target.closest("[data-guide-id]"));
     const isRulerTarget = Boolean(target.closest("[data-ruler-axis]"));
+    const connectHandle = target.closest("[data-connect-handle]");
+    if (connectMode && connectHandle && event.button === 0) {
+      const nodeId = connectHandle.closest("[data-node-id]")?.getAttribute("data-node-id");
+      if (!nodeId) return;
+      const start = worldPoint(pointInSvg(event));
+      event.currentTarget.setPointerCapture(event.pointerId);
+      dragRef.current = { type: "connect", pointerId: event.pointerId, fromId: nodeId, start };
+      setConnectionPreview({ start, end: start });
+      return;
+    }
     if (event.pointerType === "touch" && pointerPointsRef.current.size === 1 && !isGuideTarget && !isRulerTarget) {
       beginTouchGesture(event, pointInSvg(event), false);
       return;
@@ -557,9 +652,36 @@ export default function DiagramCanvas({
       return;
     }
 
+    if (toolMode === "freehand" && !connectMode && event.button === 0) {
+      onSelectEdge(null);
+      beginFreehand(event, pointInSvg(event));
+      return;
+    }
+
+    const edgeId = target.closest("[data-edge-id]")?.getAttribute("data-edge-id");
+    if (edgeId && event.button === 0) {
+      onSetSelection([]);
+      onSelectEdge(edgeId);
+      return;
+    }
+
+    const pathHandle = target.closest("[data-path-handle]");
+    if (pathHandle && event.button === 0) {
+      const nodeId = pathHandle.getAttribute("data-path-node-id");
+      const index = Number(pathHandle.getAttribute("data-path-index"));
+      const kind = pathHandle.getAttribute("data-path-kind");
+      if (!nodeId || !Number.isInteger(index) || (kind !== "anchor" && kind !== "controlIn" && kind !== "controlOut")) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      onBeginHistoryAction();
+      dragRef.current = { type: "path-handle", pointerId: event.pointerId, nodeId, index, handle: kind };
+      return;
+    }
+
     const nodeElement = target.closest("[data-node-id]");
     const nodeId = nodeElement?.getAttribute("data-node-id");
     if (nodeId) {
+      onSelectEdge(null);
       if (connectMode) {
         onConnectNode(nodeId);
         return;
@@ -573,6 +695,7 @@ export default function DiagramCanvas({
     if (event.button !== 0 && event.button !== 1) return;
 
     const point = pointInSvg(event);
+    onSelectEdge(null);
     if (event.pointerType === "touch") {
       beginTouchGesture(event, point, true);
     } else {
@@ -683,6 +806,17 @@ export default function DiagramCanvas({
       return;
     }
     const world = worldPoint(point);
+    if (session.type === "connect") {
+      setConnectionPreview({ start: session.start, end: world });
+      return;
+    }
+    if (session.type === "freehand") {
+      const last = session.points[session.points.length - 1];
+      const nextPoints = distance(last, point) >= 2 ? [...session.points, point] : session.points;
+      dragRef.current = { ...session, points: nextPoints };
+      setFreehandPreview(smoothCurve(nextPoints.map((item) => worldPoint(item))));
+      return;
+    }
     if (session.type === "marquee") {
       dragRef.current = { ...session, current: point };
       setMarquee({ start: session.start, current: point });
@@ -700,6 +834,13 @@ export default function DiagramCanvas({
     }
     if (session.type === "resize") {
       resizeNodes(session, world, event.shiftKey);
+      return;
+    }
+    if (session.type === "path-handle") {
+      const node = nodeById.get(session.nodeId);
+      if (!node) return;
+      const localWorld = rotatePoint(world, nodeCenter(node), -(node.rotation ?? 0));
+      onEditPathPoint(session.nodeId, session.index, session.handle, { x: localWorld.x - node.x, y: localWorld.y - node.y });
       return;
     }
     const angle = Math.atan2(world.y - session.pivot.y, world.x - session.pivot.x);
@@ -732,6 +873,31 @@ export default function DiagramCanvas({
     }
     const session = dragRef.current;
     if (!session || session.pointerId !== event.pointerId) return;
+    if (session.type === "connect") {
+      const hit = document.elementFromPoint(event.clientX, event.clientY);
+      const targetNodeId = hit?.closest("[data-node-id]")?.getAttribute("data-node-id");
+      if (targetNodeId && targetNodeId !== session.fromId) onCreateEdge(session.fromId, targetNodeId);
+      setConnectionPreview(null);
+      dragRef.current = null;
+      return;
+    }
+    if (session.type === "freehand") {
+      const screenPoints = session.points;
+      const end = pointInSvg(event);
+      if (distance(screenPoints[screenPoints.length - 1], end) >= 1) screenPoints.push(end);
+      if (screenPoints.length >= 2) {
+        const points = screenPoints.map((item) => worldPoint(item));
+        const left = Math.min(...points.map((item) => item.x));
+        const top = Math.min(...points.map((item) => item.y));
+        const width = Math.max(1, Math.max(...points.map((item) => item.x)) - left);
+        const height = Math.max(1, Math.max(...points.map((item) => item.y)) - top);
+        const local = points.map((item) => ({ x: item.x - left, y: item.y - top }));
+        onAddFreehand(left, top, width, height, smoothCurve(local));
+      }
+      setFreehandPreview([]);
+      dragRef.current = null;
+      return;
+    }
     if (session.type === "marquee") {
       const bounds = worldBoundsForPointDrag(session.start, session.current);
       const hitIds = nodes.filter((node) => {
@@ -742,9 +908,28 @@ export default function DiagramCanvas({
       const hits = nodes.filter((node) => hitIds.includes(node.id) || (node.groupId && hitGroups.has(node.groupId))).map((node) => node.id);
       onSetSelection(session.additive ? [...new Set([...session.baseSelection, ...hits])] : hits);
       setMarquee(null);
-    } else if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide") {
+    } else if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide" || session.type === "path-handle") {
       onEndHistoryAction();
     }
+    dragRef.current = null;
+  }
+
+  function handlePointerCancel(event: ReactPointerEvent<SVGSVGElement>) {
+    const wasPinch = pinchRef.current?.pointerIds.includes(event.pointerId) ?? false;
+    if (event.pointerType === "touch") pointerPointsRef.current.delete(event.pointerId);
+    if (wasPinch) {
+      pinchRef.current = null;
+      dragRef.current = null;
+      setMarquee(null);
+      setFreehandPreview([]);
+      return;
+    }
+    const session = dragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide" || session.type === "path-handle") onEndHistoryAction();
+    setMarquee(null);
+    setConnectionPreview(null);
+    setFreehandPreview([]);
     dragRef.current = null;
   }
 
@@ -770,21 +955,21 @@ export default function DiagramCanvas({
     <div className="canvas-frame">
       <svg
         ref={svgRef}
-        className={`diagram-canvas${connectMode ? " is-connecting" : ""}${toolMode === "select" ? " is-select-tool" : " is-pan-tool"}`}
+        className={`diagram-canvas${connectMode ? " is-connecting" : ""}${toolMode === "select" ? " is-select-tool" : toolMode === "pan" ? " is-pan-tool" : " is-freehand-tool"}`}
         viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
         tabIndex={0}
         role="application"
-        aria-label="Nieograniczone płótno diagramu. W trybie zaznaczania przeciągnij tło, aby zaznaczyć obszar. Wybierz narzędzie ręki, aby przesuwać widok; kółko myszy lub gest dwoma palcami zmienia powiększenie."
+        aria-label="Płótno diagramu. W trybie zaznaczania przeciągnij tło, aby zaznaczyć obszar. Narzędzie ręki przesuwa widok, pióro rysuje krzywe, a kółko myszy lub gest dwoma palcami zmienia powiększenie."
         onPointerDown={handleCanvasPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
         onWheel={handleWheel}
         onKeyDown={handleKeyDown}
       >
         <defs>
           <GridPattern settings={settings} camera={camera} />
-          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#aaa6c4" />
           </marker>
         </defs>
@@ -794,12 +979,15 @@ export default function DiagramCanvas({
           {edges.map((edge) => {
             const from = nodeById.get(edge.from);
             const to = nodeById.get(edge.to);
-            return from && to ? <DiagramEdgeView key={edge.id} from={from} to={to} /> : null;
+            return from && to ? <DiagramEdgeView key={edge.id} edge={edge} from={from} to={to} nodes={nodes} selected={selectedEdgeId === edge.id} /> : null;
           })}
-          {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeIds.includes(node.id)} connectSource={node.id === connectSourceId} />)}
+          {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeIds.includes(node.id)} connectSource={node.id === connectSourceId} showConnectHandles={connectMode} />)}
+          {freehandPreview.length > 1 && <path d={bezierPath(freehandPreview)} className="freehand-preview" />}
+          {connectionPreview && <path d={`M ${connectionPreview.start.x} ${connectionPreview.start.y} L ${connectionPreview.end.x} ${connectionPreview.end.y}`} className="connection-preview" />}
         </g>
         <GuideOverlays guides={settings.guides} camera={camera} />
         <SelectionOverlay bounds={selectionBounds} camera={camera} />
+        <PathHandlesOverlay nodes={nodes} selectedNodeIds={selectedNodeIds} camera={camera} />
         {marquee && (
           <rect
             x={Math.min(marquee.start.x, marquee.current.x)}

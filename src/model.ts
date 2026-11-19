@@ -1,4 +1,11 @@
-export type ShapeKind = "process" | "decision" | "class";
+export type ShapeKind = "process" | "decision" | "class" | "ellipse" | "line" | "text" | "database" | "document" | "actor" | "freehand" | "image";
+
+export interface CurvePoint {
+  x: number;
+  y: number;
+  controlIn?: { x: number; y: number };
+  controlOut?: { x: number; y: number };
+}
 
 export interface DiagramNode {
   id: string;
@@ -12,12 +19,31 @@ export interface DiagramNode {
   rotation?: number;
   locked?: boolean;
   groupId?: string;
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  textColor?: string;
+  fontSize?: number;
+  fontWeight?: "normal" | "bold";
+  fontStyle?: "normal" | "italic";
+  textAlign?: "left" | "center" | "right";
+  imageData?: string;
+  imageSrc?: string;
+  linkUrl?: string;
+  pathPoints?: CurvePoint[];
 }
+
+export type ConnectorKind = "straight" | "elbow" | "curve";
 
 export interface DiagramEdge {
   id: string;
   from: string;
   to: string;
+  label?: string;
+  connectorKind?: ConnectorKind;
+  autoRoute?: boolean;
+  arrowStart?: boolean;
+  arrowEnd?: boolean;
 }
 
 export type GridStyle = "dots" | "lines" | "isometric";

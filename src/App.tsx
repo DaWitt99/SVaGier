@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowDownToLine,
   Check,
   Hand,
+  Pencil,
+  ImagePlus,
   Lock,
   Unlock,
   Undo2,
@@ -19,9 +21,10 @@ import {
 } from "lucide-react";
 import DiagramCanvas from "./components/DiagramCanvas";
 import CanvasSettingsPanel from "./components/CanvasSettingsPanel";
+import ShapeLibraryPanel from "./components/ShapeLibraryPanel";
 import { downloadSvg } from "./exportSvg";
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./components/DiagramCanvas";
-import { defaultEditorSettings, initialDocument, type Camera, type DiagramDocument, type DiagramNode, type EditorSettings, type GuideAxis, type ShapeKind } from "./model";
+import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type EditorSettings, type GuideAxis, type ShapeKind } from "./model";
 
 const STORAGE_KEY = "svagier.document.v1";
 
@@ -54,7 +57,10 @@ function App() {
   const historyActionRef = useRef<DiagramDocument | null>(null);
   const [historyStatus, setHistoryStatus] = useState({ undo: 0, redo: 0 });
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(["idea"]);
-  const [toolMode, setToolMode] = useState<"select" | "pan">("select");
+  const [toolMode, setToolMode] = useState<"select" | "pan" | "freehand">("select");
+  const [showShapeLibrary, setShowShapeLibrary] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [connectMode, setConnectMode] = useState(false);
   const [connectSourceId, setConnectSourceId] = useState<string | null>(null);
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
@@ -67,6 +73,10 @@ function App() {
   const selectedNode = useMemo(
     () => selectedNodes.length === 1 ? selectedNodes[0] : null,
     [selectedNodes],
+  );
+  const selectedEdge = useMemo(
+    () => document.edges.find((edge) => edge.id === selectedEdgeId) ?? null,
+    [document.edges, selectedEdgeId],
   );
 
   useEffect(() => {
@@ -163,7 +173,19 @@ function App() {
       ...current,
       nodes: current.nodes.map((node) => {
         const updatesForNode = updateById.get(node.id);
-        return updatesForNode ? { ...node, ...updatesForNode } : node;
+        if (!updatesForNode) return node;
+        const next = { ...node, ...updatesForNode };
+        if (node.pathPoints && (updatesForNode.width !== undefined || updatesForNode.height !== undefined)) {
+          const scaleX = next.width / node.width;
+          const scaleY = next.height / node.height;
+          next.pathPoints = node.pathPoints.map((point) => ({
+            x: point.x * scaleX,
+            y: point.y * scaleY,
+            controlIn: point.controlIn ? { x: point.controlIn.x * scaleX, y: point.controlIn.y * scaleY } : undefined,
+            controlOut: point.controlOut ? { x: point.controlOut.x * scaleX, y: point.controlOut.y * scaleY } : undefined,
+          }));
+        }
+        return next;
       }),
     }));
   }
@@ -236,46 +258,139 @@ function App() {
     }));
   }
 
-  function addNode() {
+  function addNode(kind: ShapeKind = "process", title?: string, width?: number, height?: number) {
     const id = `node-${crypto.randomUUID()}`;
     const anchor = selectedNodes.length === 1 ? selectedNodes[0] : undefined;
     const offset = (document.nodes.length % 4) * 22;
+    const defaultSizes: Record<ShapeKind, [number, number]> = {
+      process: [210, 96], decision: [190, 110], class: [230, 124], ellipse: [190, 110], line: [180, 8], text: [240, 70],
+      database: [190, 116], document: [190, 116], actor: [130, 170], freehand: [160, 120], image: [220, 150],
+    };
+    const [defaultWidth, defaultHeight] = defaultSizes[kind];
     const node: DiagramNode = {
       id,
-      kind: "process",
-      x: anchor ? anchor.x + anchor.width + 60 : 590,
-      y: anchor ? anchor.y + offset : 390,
-      width: 210,
-      height: 96,
-      title: "Nowy element",
-      detail: "Dodaj opis",
+      kind,
+      x: anchor ? anchor.x + anchor.width + 60 : (CANVAS_WIDTH / 2 - camera.x) / camera.zoom - (width ?? defaultWidth) / 2,
+      y: anchor ? anchor.y + offset : (CANVAS_HEIGHT / 2 - camera.y) / camera.zoom - (height ?? defaultHeight) / 2,
+      width: width ?? defaultWidth,
+      height: height ?? defaultHeight,
+      title: title ?? (kind === "text" ? "Dodaj tekst" : kind === "line" ? "" : "Nowy element"),
+      detail: kind === "text" || kind === "line" ? "" : "Dodaj opis",
+      ...(kind === "text" ? { fontSize: 20, textAlign: "left" as const, textColor: "#302f43" } : {}),
     };
     updateDocument((current) => ({ ...current, nodes: [...current.nodes, node] }));
     setSelectedNodeIds([id]);
+    setSelectedEdgeId(null);
     setConnectMode(false);
     setConnectSourceId(null);
+  }
+
+  function addImage(data: string, fileName: string) {
+    const id = `image-${crypto.randomUUID()}`;
+    const node: DiagramNode = {
+      id,
+      kind: "image",
+      x: (CANVAS_WIDTH / 2 - camera.x) / camera.zoom - 120,
+      y: (CANVAS_HEIGHT / 2 - camera.y) / camera.zoom - 80,
+      width: 240,
+      height: 160,
+      title: fileName,
+      detail: "",
+      imageData: data,
+      stroke: "#d8d8e7",
+    };
+    updateDocument((current) => ({ ...current, nodes: [...current.nodes, node] }));
+    setSelectedNodeIds([id]);
+    setSelectedEdgeId(null);
+  }
+
+  function handleImageFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") addImage(reader.result, file.name);
+      event.target.value = "";
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function addFreehand(x: number, y: number, width: number, height: number, pathPoints: CurvePoint[]) {
+    const node: DiagramNode = {
+      id: `path-${crypto.randomUUID()}`,
+      kind: "freehand",
+      x,
+      y,
+      width,
+      height,
+      title: "",
+      detail: "",
+      pathPoints,
+      stroke: "#5e50b4",
+      strokeWidth: 3,
+    };
+    updateDocument((current) => ({ ...current, nodes: [...current.nodes, node] }));
+    setSelectedNodeIds([node.id]);
+    setSelectedEdgeId(null);
+    setToolMode("select");
+  }
+
+  function editPathPoint(nodeId: string, index: number, handle: "anchor" | "controlIn" | "controlOut", point: { x: number; y: number }) {
+    updateDocument((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) => {
+        if (node.id !== nodeId || !node.pathPoints || !node.pathPoints[index]) return node;
+        const pathPoints = node.pathPoints.map((item) => ({ ...item, controlIn: item.controlIn && { ...item.controlIn }, controlOut: item.controlOut && { ...item.controlOut } }));
+        const target = pathPoints[index];
+        if (handle === "anchor") {
+          const deltaX = point.x - target.x;
+          const deltaY = point.y - target.y;
+          target.x = point.x;
+          target.y = point.y;
+          if (target.controlIn) target.controlIn = { x: target.controlIn.x + deltaX, y: target.controlIn.y + deltaY };
+          if (target.controlOut) target.controlOut = { x: target.controlOut.x + deltaX, y: target.controlOut.y + deltaY };
+        } else target[handle] = point;
+        return { ...node, pathPoints };
+      }),
+    }));
+  }
+
+  function createEdge(from: string, to: string) {
+    if (from === to) return;
+    const existing = documentRef.current.edges.find((edge) => edge.from === from && edge.to === to);
+    if (existing) {
+      setSelectedNodeIds([]);
+      setSelectedEdgeId(existing.id);
+      return;
+    }
+    const edge: DiagramEdge = { id: `edge-${crypto.randomUUID()}`, from, to, connectorKind: "elbow", autoRoute: true, arrowEnd: true };
+    updateDocument((current) => ({ ...current, edges: [...current.edges, edge] }));
+    setSelectedNodeIds([]);
+    setSelectedEdgeId(edge.id);
+  }
+
+  function updateEdge(id: string, updates: Partial<DiagramEdge>) {
+    updateDocument((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === id ? { ...edge, ...updates } : edge) }));
+  }
+
+  function removeSelectedEdge() {
+    if (!selectedEdgeId) return;
+    updateDocument((current) => ({ ...current, edges: current.edges.filter((edge) => edge.id !== selectedEdgeId) }));
+    setSelectedEdgeId(null);
   }
 
   function handleConnectNode(id: string) {
     if (!connectSourceId) {
       setConnectSourceId(id);
       setSelectedNodeIds([id]);
+      setSelectedEdgeId(null);
       return;
     }
     if (connectSourceId === id) {
       setConnectSourceId(null);
       return;
     }
-    const alreadyConnected = document.edges.some(
-      (edge) => edge.from === connectSourceId && edge.to === id,
-    );
-    if (!alreadyConnected) {
-      updateDocument((current) => ({
-        ...current,
-        edges: [...current.edges, { id: `edge-${crypto.randomUUID()}`, from: connectSourceId, to: id }],
-      }));
-    }
-    setSelectedNodeIds([id]);
+    createEdge(connectSourceId, id);
     setConnectSourceId(null);
     setConnectMode(false);
   }
@@ -387,8 +502,11 @@ function App() {
 
   function changeNodeKind(kind: ShapeKind) {
     if (!selectedNode) return;
-    const height = kind === "class" ? 124 : kind === "decision" ? 108 : 96;
-    const width = kind === "class" ? 230 : kind === "decision" ? 210 : 210;
+    const sizes: Partial<Record<ShapeKind, [number, number]>> = {
+      process: [210, 96], decision: [190, 110], class: [230, 124], ellipse: [190, 110], line: [180, 8],
+      text: [240, 70], database: [190, 116], document: [190, 116], actor: [130, 170],
+    };
+    const [width, height] = sizes[kind] ?? [selectedNode.width, selectedNode.height];
     updateNode(selectedNode.id, { kind, width, height });
   }
 
@@ -432,7 +550,10 @@ function App() {
             <button className={`rail-button${toolMode === "pan" ? " active" : ""}`} type="button" aria-label="Przesuwanie płótna" title="Przesuwanie płótna" onClick={() => setToolMode("pan")}>
               <Hand size={18} />
             </button>
-            <button className="rail-button" type="button" aria-label="Dodaj kształt" title="Dodaj kształt" onClick={addNode}>
+            <button className={`rail-button${toolMode === "freehand" ? " active" : ""}`} type="button" aria-label="Rysowanie odręczne" title="Rysowanie krzywych Béziera" onClick={() => { setToolMode("freehand"); setConnectMode(false); }}>
+              <Pencil size={18} />
+            </button>
+            <button className="rail-button" type="button" aria-label="Dodaj kształt" title="Dodaj kształt" onClick={() => addNode()}>
               <Plus size={20} />
             </button>
             <button
@@ -458,7 +579,11 @@ function App() {
               {connectMode && <span className="mode-hint">{connectSourceId ? "Wybierz drugi element" : "Wybierz pierwszy element"}</span>}
             </div>
             <div className="toolbar-actions">
-              <button className="toolbar-button" type="button" aria-label="Dodaj element" title="Dodaj element" onClick={addNode}>
+              <button className={`toolbar-button${showShapeLibrary ? " selected" : ""}`} type="button" aria-label="Otwórz bibliotekę kształtów" title="Biblioteka kształtów i symboli" aria-expanded={showShapeLibrary} onClick={() => setShowShapeLibrary((current) => { if (!current) setShowCanvasSettings(false); return !current; })}>
+                <Shapes size={16} />
+                <span>Kształty</span>
+              </button>
+              <button className="toolbar-button" type="button" aria-label="Dodaj element" title="Dodaj element" onClick={() => addNode()}>
                 <Plus size={16} />
                 <span>Element</span>
               </button>
@@ -468,6 +593,11 @@ function App() {
               <button className="toolbar-button history-button" type="button" aria-label="Ponów" title="Ponów (Ctrl/Cmd+Shift+Z)" disabled={!historyStatus.redo} onClick={redo}>
                 <Redo2 size={15} />
               </button>
+              <button className="toolbar-button" type="button" aria-label="Wstaw obraz" title="Wstaw obraz z pliku" onClick={() => imageInputRef.current?.click()}>
+                <ImagePlus size={15} />
+                <span>Obraz</span>
+              </button>
+              <input ref={imageInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={handleImageFile} />
               <button
                 className={`toolbar-button${connectMode ? " selected" : ""}`}
                 type="button"
@@ -491,7 +621,7 @@ function App() {
                 aria-label="Ustawienia widoku"
                 title="Ustawienia widoku"
                 aria-expanded={showCanvasSettings}
-                onClick={() => setShowCanvasSettings((current) => !current)}
+                onClick={() => setShowCanvasSettings((current) => { if (!current) setShowShapeLibrary(false); return !current; })}
               >
                 <SlidersHorizontal size={15} />
                 <span>Widok</span>
@@ -538,16 +668,36 @@ function App() {
               toolMode={toolMode}
               connectMode={connectMode}
               connectSourceId={connectSourceId}
+              selectedEdgeId={selectedEdgeId}
               onCameraChange={setCamera}
               onSetSelection={setSelectedNodeIds}
               onMoveNodes={moveNodes}
               onBeginHistoryAction={beginHistoryAction}
               onEndHistoryAction={endHistoryAction}
               onConnectNode={handleConnectNode}
+              onCreateEdge={createEdge}
+              onSelectEdge={setSelectedEdgeId}
+              onAddFreehand={addFreehand}
+              onEditPathPoint={editPathPoint}
               onClearSelection={() => setSelectedNodeIds([])}
               onAddGuide={addGuide}
               onMoveGuide={moveGuide}
             />
+            {showShapeLibrary && (
+              <ShapeLibraryPanel
+                onAdd={(kind, title, width, height) => {
+                  addNode(kind, title, width, height);
+                  setShowShapeLibrary(false);
+                  setToolMode("select");
+                }}
+                onSelectFreehand={() => {
+                  setShowShapeLibrary(false);
+                  setToolMode("freehand");
+                  setConnectMode(false);
+                }}
+                onClose={() => setShowShapeLibrary(false)}
+              />
+            )}
             {showCanvasSettings && (
               <CanvasSettingsPanel
                 settings={document.editor}
@@ -576,8 +726,8 @@ function App() {
               <span className="eyebrow">PANEL</span>
               <h2>Właściwości</h2>
             </div>
-            {selectedNode && (
-              <button className="icon-button inspector-close" type="button" aria-label="Usuń element" title="Usuń element" disabled={selectedNode.locked} onClick={removeSelectedNode}>
+            {(selectedNode || selectedEdge) && (
+              <button className="icon-button inspector-close" type="button" aria-label={selectedEdge ? "Usuń połączenie" : "Usuń element"} title={selectedEdge ? "Usuń połączenie" : "Usuń element"} disabled={selectedNode?.locked} onClick={selectedEdge ? removeSelectedEdge : removeSelectedNode}>
                 <Trash2 size={16} />
               </button>
             )}
@@ -585,7 +735,7 @@ function App() {
           {selectedNode ? (
             <div className="inspector-content">
               <div className="field-group">
-                <label htmlFor="node-title">Tekst</label>
+                  <label htmlFor="node-title">{selectedNode.kind === "image" ? "Tekst alternatywny" : "Tekst"}</label>
                 <input
                   id="node-title"
                   value={selectedNode.title}
@@ -603,13 +753,51 @@ function App() {
                   onChange={(event) => updateNode(selectedNode.id, { detail: event.target.value })}
                 />
               </div>
-              <div className="field-group">
+              {selectedNode.kind !== "image" && selectedNode.kind !== "freehand" && <div className="field-group">
                 <label htmlFor="node-shape">Kształt</label>
                 <select id="node-shape" value={selectedNode.kind} disabled={selectedNode.locked} onChange={(event) => changeNodeKind(event.target.value as ShapeKind)}>
-                  <option value="process">Prostokąt</option>
-                  <option value="decision">Decyzja</option>
-                  <option value="class">Klasa UML</option>
+                  <option value="process">Prostokąt</option><option value="decision">Romb</option><option value="class">Klasa UML</option>
+                  <option value="ellipse">Elipsa</option><option value="line">Linia</option><option value="text">Pole tekstowe</option>
+                  <option value="database">Baza danych</option><option value="document">Dokument</option><option value="actor">Aktor UML</option>
                 </select>
+              </div>}
+              {selectedNode.kind !== "image" && selectedNode.kind !== "freehand" && selectedNode.kind !== "line" && (
+                <>
+                  <div className="settings-fields-row inspector-color-row">
+                    <label className="field-group"><span>Wypełnienie</span><input type="color" value={selectedNode.fill ?? "#ffffff"} disabled={selectedNode.locked || selectedNode.kind === "text"} onChange={(event) => updateNode(selectedNode.id, { fill: event.target.value })} /></label>
+                    <label className="field-group"><span>Kontur</span><input type="color" value={selectedNode.stroke ?? "#d8d8e7"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { stroke: event.target.value })} /></label>
+                  </div>
+                  <div className="settings-fields-row inspector-color-row">
+                    <label className="field-group"><span>Kolor tekstu</span><input type="color" value={selectedNode.textColor ?? "#302f43"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { textColor: event.target.value })} /></label>
+                    <label className="field-group"><span>Rozmiar tekstu</span><input type="number" min="8" max="96" value={selectedNode.fontSize ?? 15} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 8)) })} /></label>
+                  </div>
+                  <label className="settings-field">
+                    <span>Wyrównanie tekstu</span>
+                    <select value={selectedNode.textAlign ?? "center"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { textAlign: event.target.value as DiagramNode["textAlign"] })}>
+                      <option value="left">Do lewej</option><option value="center">Do środka</option><option value="right">Do prawej</option>
+                    </select>
+                  </label>
+                  <div className="text-format-toggles">
+                    <label><input type="checkbox" checked={selectedNode.fontWeight === "bold"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { fontWeight: event.target.checked ? "bold" : "normal" })} /> Pogrubienie</label>
+                    <label><input type="checkbox" checked={selectedNode.fontStyle === "italic"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { fontStyle: event.target.checked ? "italic" : "normal" })} /> Kursywa</label>
+                  </div>
+                </>
+              )}
+              {selectedNode.kind === "image" && (
+                <>
+                  <div className="field-group"><label htmlFor="image-source">Adres obrazu</label><input id="image-source" value={selectedNode.imageSrc ?? ""} placeholder="https://…" disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { imageSrc: event.target.value, imageData: undefined })} /></div>
+                </>
+              )}
+              {(selectedNode.kind === "freehand" || selectedNode.kind === "line") && (
+                <div className="settings-fields-row inspector-color-row">
+                  <label className="field-group"><span>Kolor linii</span><input type="color" value={selectedNode.stroke ?? "#5e50b4"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { stroke: event.target.value })} /></label>
+                  <label className="field-group"><span>Grubość</span><input type="number" min="1" max="20" value={selectedNode.strokeWidth ?? 3} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { strokeWidth: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label>
+                </div>
+              )}
+              <div className="field-group">
+                <label htmlFor="node-link">Odnośnik zewnętrzny</label>
+                <input id="node-link" value={selectedNode.linkUrl ?? ""} placeholder="file:///… lub https://…" disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { linkUrl: event.target.value })} />
+                {selectedNode.linkUrl && <a className="external-link-open" href={selectedNode.linkUrl} target="_blank" rel="noreferrer">Otwórz odnośnik</a>}
               </div>
               <div className="field-group">
                 <label htmlFor="node-rotation">Obrót (°)</label>
@@ -626,6 +814,20 @@ function App() {
                 <Sparkles size={15} />
                 <p>{selectedNode.locked ? "Element jest zablokowany. Odblokuj go na pasku zaznaczenia, aby go edytować." : "Przeciągnij element, uchwyty zmiany rozmiaru lub uchwyt obrotu. Przytrzymaj Shift, aby zachować proporcje i obracać bez przyciągania."}</p>
               </div>
+            </div>
+          ) : selectedEdge ? (
+            <div className="inspector-content">
+              <div className="field-group"><label htmlFor="edge-label">Etykieta połączenia</label><input id="edge-label" value={selectedEdge.label ?? ""} onChange={(event) => updateEdge(selectedEdge.id, { label: event.target.value })} placeholder="Opis relacji" /></div>
+              <div className="field-group">
+                <label htmlFor="edge-style">Rodzaj łącznika</label>
+                <select id="edge-style" value={selectedEdge.connectorKind ?? "straight"} onChange={(event) => updateEdge(selectedEdge.id, { connectorKind: event.target.value as DiagramEdge["connectorKind"] })}>
+                  <option value="straight">Prosty</option><option value="elbow">Łamany</option><option value="curve">Krzywy</option>
+                </select>
+              </div>
+              <label className="settings-toggle"><input type="checkbox" checked={selectedEdge.autoRoute !== false} onChange={(event) => updateEdge(selectedEdge.id, { autoRoute: event.target.checked })} /><span>Omijaj pozostałe kształty</span></label>
+              <label className="settings-toggle"><input type="checkbox" checked={selectedEdge.arrowStart === true} onChange={(event) => updateEdge(selectedEdge.id, { arrowStart: event.target.checked })} /><span>Grot na początku</span></label>
+              <label className="settings-toggle"><input type="checkbox" checked={selectedEdge.arrowEnd !== false} onChange={(event) => updateEdge(selectedEdge.id, { arrowEnd: event.target.checked })} /><span>Grot na końcu</span></label>
+              <div className="inspector-note"><Spline size={15} /><p>Połączenie pozostaje przyłączone do kształtów podczas ich przesuwania.</p></div>
             </div>
           ) : selectedNodes.length > 1 ? (
             <div className="inspector-content">
