@@ -14,19 +14,20 @@ import {
   MousePointer2,
   Plus,
   Shapes,
-  Sparkles,
   Spline,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import DiagramCanvas from "./components/DiagramCanvas";
 import CanvasSettingsPanel from "./components/CanvasSettingsPanel";
+import InspectorPanel from "./components/InspectorPanel";
 import OutlinePanel from "./components/OutlinePanel";
 import ShapeLibraryPanel from "./components/ShapeLibraryPanel";
 import { downloadSvg } from "./exportSvg";
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./components/DiagramCanvas";
-import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type EditorSettings, type GuideAxis, type MindMapLayout, type ShapeKind } from "./model";
+import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type EditorSettings, type GuideAxis, type InspectorSection, type MindMapLayout, type ShapeKind } from "./model";
 import { getVisibleMindMapNodes, layoutMindMap } from "./mindmapLayout";
+import { shapeDefinition } from "./shapeLibrary";
 
 const STORAGE_KEY = "svagier.document.v1";
 
@@ -77,6 +78,7 @@ function App() {
   const historyActionRef = useRef<DiagramDocument | null>(null);
   const [historyStatus, setHistoryStatus] = useState({ undo: 0, redo: 0 });
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(["idea"]);
+  const [activeInspectorSection, setActiveInspectorSection] = useState<InspectorSection | null>(null);
   const [toolMode, setToolMode] = useState<"select" | "pan" | "freehand">("select");
   const [showShapeLibrary, setShowShapeLibrary] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
@@ -99,6 +101,10 @@ function App() {
     () => document.edges.find((edge) => edge.id === selectedEdgeId) ?? null,
     [document.edges, selectedEdgeId],
   );
+  useEffect(() => {
+    if (!selectedNode && !selectedEdge) setActiveInspectorSection(null);
+    else if (selectedEdge && activeInspectorSection && activeInspectorSection !== "content" && activeInspectorSection !== "style") setActiveInspectorSection(null);
+  }, [selectedNode?.id, selectedEdge?.id]);
   const visibleNodes = useMemo(() => getVisibleMindMapNodes(document.nodes), [document.nodes]);
   const { nodesWithChildren, treeBranchCount } = useMemo(() => {
     const nodeIds = new Set(document.nodes.map((node) => node.id));
@@ -197,7 +203,21 @@ function App() {
   function updateNode(id: string, updates: Partial<DiagramNode>) {
     updateDocument((current) => ({
       ...current,
-      nodes: current.nodes.map((node) => (node.id === id ? { ...node, ...updates } : node)),
+      nodes: current.nodes.map((node) => {
+        if (node.id !== id) return node;
+        const next = { ...node, ...updates };
+        if (node.pathPoints && (updates.width !== undefined || updates.height !== undefined)) {
+          const scaleX = next.width / node.width;
+          const scaleY = next.height / node.height;
+          next.pathPoints = node.pathPoints.map((point) => ({
+            x: point.x * scaleX,
+            y: point.y * scaleY,
+            controlIn: point.controlIn ? { x: point.controlIn.x * scaleX, y: point.controlIn.y * scaleY } : undefined,
+            controlOut: point.controlOut ? { x: point.controlOut.x * scaleX, y: point.controlOut.y * scaleY } : undefined,
+          }));
+        }
+        return next;
+      }),
     }));
   }
 
@@ -296,11 +316,9 @@ function App() {
     const id = `node-${crypto.randomUUID()}`;
     const anchor = selectedNodes.length === 1 ? selectedNodes[0] : undefined;
     const offset = (document.nodes.length % 4) * 22;
-    const defaultSizes: Record<ShapeKind, [number, number]> = {
-      process: [210, 96], decision: [190, 110], class: [230, 124], ellipse: [190, 110], line: [180, 8], text: [240, 70],
-      database: [190, 116], document: [190, 116], actor: [130, 170], freehand: [160, 120], image: [220, 150],
-    };
-    const [defaultWidth, defaultHeight] = defaultSizes[kind];
+    const definition = shapeDefinition(kind);
+    const defaultWidth = definition?.width ?? (kind === "freehand" ? 160 : 220);
+    const defaultHeight = definition?.height ?? (kind === "freehand" ? 120 : 150);
     const node: DiagramNode = {
       id,
       kind,
@@ -309,7 +327,7 @@ function App() {
       width: width ?? defaultWidth,
       height: height ?? defaultHeight,
       title: title ?? (kind === "text" ? "Dodaj tekst" : kind === "line" ? "" : "Nowy element"),
-      detail: kind === "text" || kind === "line" ? "" : "Dodaj opis",
+      detail: definition?.detail ?? (kind === "text" || kind === "line" ? "" : "Dodaj opis"),
       ...(kind === "text" ? { fontSize: 20, textAlign: "left" as const, textColor: "#302f43" } : {}),
     };
     updateDocument((current) => ({ ...current, nodes: [...current.nodes, node] }));
@@ -657,12 +675,13 @@ function App() {
 
   function changeNodeKind(kind: ShapeKind) {
     if (!selectedNode) return;
-    const sizes: Partial<Record<ShapeKind, [number, number]>> = {
-      process: [210, 96], decision: [190, 110], class: [230, 124], ellipse: [190, 110], line: [180, 8],
-      text: [240, 70], database: [190, 116], document: [190, 116], actor: [130, 170],
-    };
-    const [width, height] = sizes[kind] ?? [selectedNode.width, selectedNode.height];
-    updateNode(selectedNode.id, { kind, width, height });
+    const definition = shapeDefinition(kind);
+    updateNode(selectedNode.id, {
+      kind,
+      width: definition?.width ?? selectedNode.width,
+      height: definition?.height ?? selectedNode.height,
+      detail: definition?.detail ?? selectedNode.detail,
+    });
   }
 
   const movableSelectionCount = selectedNodes.filter((node) => !node.locked).length;
@@ -726,6 +745,20 @@ function App() {
           </div>
         </aside>
 
+        {activeInspectorSection && (selectedNode || selectedEdge) && (
+          <InspectorPanel
+            section={activeInspectorSection}
+            selectedNode={selectedNode}
+            selectedEdge={selectedEdge}
+            rotationSnapDegrees={document.editor.rotationSnapDegrees}
+            onUpdateNode={updateNode}
+            onChangeNodeKind={changeNodeKind}
+            onUpdateEdge={updateEdge}
+            onDelete={() => selectedEdge ? removeSelectedEdge() : removeSelectedNode()}
+            onClose={() => setActiveInspectorSection(null)}
+          />
+        )}
+
         <main className="editor-area">
           <div className="editor-toolbar">
             <div className="toolbar-context">
@@ -788,12 +821,9 @@ function App() {
             </div>
           </div>
 
-          {selectedNodeIds.length > 0 && (
+          {selectedNodeIds.length > 1 && (
             <div className="selection-toolbar" role="toolbar" aria-label="Narzędzia zaznaczania i układania">
               <span className="selection-toolbar-count">{selectedNodeIds.length} zazn.</span>
-              <button type="button" disabled={!selectedNode || selectedNode.locked} title="Dodaj podgałąź (Tab)" onClick={() => selectedNode && addChildNode(selectedNode.id)}>+ Podgałąź</button>
-              <button type="button" disabled={!selectedNode || selectedNode.locked} title="Dodaj element na tym samym poziomie (Enter)" onClick={() => selectedNode && addSiblingNode(selectedNode.id)}>+ Ten sam poziom</button>
-              <span className="selection-toolbar-divider" />
               <button type="button" disabled={movableSelectionCount < 2} title="Grupuj zaznaczone elementy" onClick={groupSelected}>Grupuj</button>
               <button type="button" disabled={!groupedSelection} title="Rozgrupuj zaznaczone elementy" onClick={ungroupSelected}>Rozgrupuj</button>
               <span className="selection-toolbar-divider" />
@@ -832,14 +862,20 @@ function App() {
               connectMode={connectMode}
               connectSourceId={connectSourceId}
               selectedEdgeId={selectedEdgeId}
+              activeInspectorSection={activeInspectorSection}
+              onOpenInspector={setActiveInspectorSection}
+              onAddChildNode={addChildNode}
+              onAddSiblingNode={addSiblingNode}
+              onToggleLockSelected={toggleLockSelected}
+              onDeleteSelection={() => selectedEdge ? removeSelectedEdge() : removeSelectedNode()}
               onCameraChange={setCamera}
-              onSetSelection={setSelectedNodeIds}
+              onSetSelection={(ids) => { setSelectedNodeIds(ids); if (ids.length === 0) setActiveInspectorSection(null); }}
               onMoveNodes={moveNodes}
               onBeginHistoryAction={beginHistoryAction}
               onEndHistoryAction={endHistoryAction}
               onConnectNode={handleConnectNode}
               onCreateEdge={createEdge}
-              onSelectEdge={setSelectedEdgeId}
+              onSelectEdge={(id) => { setSelectedEdgeId(id); if (id !== null) setSelectedNodeIds([]); }}
               onToggleCollapse={toggleBranchCollapsed}
               onAddFreehand={addFreehand}
               onEditPathPoint={editPathPoint}
@@ -896,162 +932,7 @@ function App() {
           </section>
         </main>
 
-        <aside className="inspector" aria-label="Właściwości elementu">
-          <div className="inspector-heading">
-            <div>
-              <span className="eyebrow">PANEL</span>
-              <h2>Właściwości</h2>
-            </div>
-            {(selectedNode || selectedEdge) && (
-              <button className="icon-button inspector-close" type="button" aria-label={selectedEdge ? "Usuń połączenie" : "Usuń element"} title={selectedEdge ? "Usuń połączenie" : "Usuń element"} disabled={selectedNode?.locked} onClick={selectedEdge ? removeSelectedEdge : removeSelectedNode}>
-                <Trash2 size={16} />
-              </button>
-            )}
-          </div>
-          {selectedNode ? (
-            <div className="inspector-content">
-              <div className="field-group">
-                  <label htmlFor="node-title">{selectedNode.kind === "image" ? "Tekst alternatywny" : "Tekst"}</label>
-                <input
-                  id="node-title"
-                  value={selectedNode.title}
-                  disabled={selectedNode.locked}
-                  onChange={(event) => updateNode(selectedNode.id, { title: event.target.value })}
-                />
-              </div>
-              <div className="field-group">
-                <label htmlFor="node-detail">Opis</label>
-                <textarea
-                  id="node-detail"
-                  rows={3}
-                  value={selectedNode.detail}
-                  disabled={selectedNode.locked}
-                  onChange={(event) => updateNode(selectedNode.id, { detail: event.target.value })}
-                />
-              </div>
-              <div className="field-group">
-                <label htmlFor="node-labels">Etykiety</label>
-                <input
-                  id="node-labels"
-                  value={selectedNode.labels?.join(", ") ?? ""}
-                  placeholder="np. Badania, Etap 1"
-                  disabled={selectedNode.locked}
-                  onChange={(event) => updateNode(selectedNode.id, { labels: [...new Set(event.target.value.split(/[,;\n]/).map((label) => label.trim()).filter(Boolean))] })}
-                />
-              </div>
-              <label className="settings-field">
-                <span>Priorytet</span>
-                <select value={selectedNode.priority ?? ""} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { priority: event.target.value ? event.target.value as DiagramNode["priority"] : undefined })}>
-                  <option value="">Brak</option><option value="low">Niski</option><option value="medium">Średni</option><option value="high">Wysoki</option>
-                </select>
-              </label>
-              <div className="field-group">
-                <label htmlFor="node-notes">Notatki</label>
-                <textarea id="node-notes" rows={3} value={selectedNode.notes ?? ""} disabled={selectedNode.locked} placeholder="Dodatkowe informacje…" onChange={(event) => updateNode(selectedNode.id, { notes: event.target.value })} />
-              </div>
-              <div className="field-group">
-                <label htmlFor="node-comments">Komentarze</label>
-                <textarea id="node-comments" rows={3} value={selectedNode.comments ?? ""} disabled={selectedNode.locked} placeholder="Komentarz do węzła…" onChange={(event) => updateNode(selectedNode.id, { comments: event.target.value })} />
-              </div>
-              {selectedNode.kind !== "image" && selectedNode.kind !== "freehand" && <div className="field-group">
-                <label htmlFor="node-shape">Kształt</label>
-                <select id="node-shape" value={selectedNode.kind} disabled={selectedNode.locked} onChange={(event) => changeNodeKind(event.target.value as ShapeKind)}>
-                  <option value="process">Prostokąt</option><option value="decision">Romb</option><option value="class">Klasa UML</option>
-                  <option value="ellipse">Elipsa</option><option value="line">Linia</option><option value="text">Pole tekstowe</option>
-                  <option value="database">Baza danych</option><option value="document">Dokument</option><option value="actor">Aktor UML</option>
-                </select>
-              </div>}
-              {selectedNode.kind !== "image" && selectedNode.kind !== "freehand" && selectedNode.kind !== "line" && (
-                <>
-                  <div className="settings-fields-row inspector-color-row">
-                    <label className="field-group"><span>Wypełnienie</span><input type="color" value={selectedNode.fill ?? "#ffffff"} disabled={selectedNode.locked || selectedNode.kind === "text"} onChange={(event) => updateNode(selectedNode.id, { fill: event.target.value })} /></label>
-                    <label className="field-group"><span>Kontur</span><input type="color" value={selectedNode.stroke ?? "#d8d8e7"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { stroke: event.target.value })} /></label>
-                  </div>
-                  <div className="settings-fields-row inspector-color-row">
-                    <label className="field-group"><span>Kolor tekstu</span><input type="color" value={selectedNode.textColor ?? "#302f43"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { textColor: event.target.value })} /></label>
-                    <label className="field-group"><span>Rozmiar tekstu</span><input type="number" min="8" max="96" value={selectedNode.fontSize ?? 15} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 8)) })} /></label>
-                  </div>
-                  <label className="settings-field">
-                    <span>Wyrównanie tekstu</span>
-                    <select value={selectedNode.textAlign ?? "center"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { textAlign: event.target.value as DiagramNode["textAlign"] })}>
-                      <option value="left">Do lewej</option><option value="center">Do środka</option><option value="right">Do prawej</option>
-                    </select>
-                  </label>
-                  <div className="text-format-toggles">
-                    <label><input type="checkbox" checked={selectedNode.fontWeight === "bold"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { fontWeight: event.target.checked ? "bold" : "normal" })} /> Pogrubienie</label>
-                    <label><input type="checkbox" checked={selectedNode.fontStyle === "italic"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { fontStyle: event.target.checked ? "italic" : "normal" })} /> Kursywa</label>
-                  </div>
-                </>
-              )}
-              {selectedNode.kind === "image" && (
-                <>
-                  <div className="field-group"><label htmlFor="image-source">Adres obrazu</label><input id="image-source" value={selectedNode.imageSrc ?? ""} placeholder="https://…" disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { imageSrc: event.target.value, imageData: undefined })} /></div>
-                </>
-              )}
-              {(selectedNode.kind === "freehand" || selectedNode.kind === "line") && (
-                <div className="settings-fields-row inspector-color-row">
-                  <label className="field-group"><span>Kolor linii</span><input type="color" value={selectedNode.stroke ?? "#5e50b4"} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { stroke: event.target.value })} /></label>
-                  <label className="field-group"><span>Grubość</span><input type="number" min="1" max="20" value={selectedNode.strokeWidth ?? 3} disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { strokeWidth: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label>
-                </div>
-              )}
-              <div className="field-group">
-                <label htmlFor="node-link">Odnośnik zewnętrzny</label>
-                <input id="node-link" value={selectedNode.linkUrl ?? ""} placeholder="file:///… lub https://…" disabled={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { linkUrl: event.target.value })} />
-                {selectedNode.linkUrl && <a className="external-link-open" href={selectedNode.linkUrl} target="_blank" rel="noreferrer">Otwórz odnośnik</a>}
-              </div>
-              <div className="field-group">
-                <label htmlFor="node-rotation">Obrót (°)</label>
-                <input
-                  id="node-rotation"
-                  type="number"
-                  step={document.editor.rotationSnapDegrees}
-                  value={Math.round((selectedNode.rotation ?? 0) * 100) / 100}
-                  disabled={selectedNode.locked}
-                  onChange={(event) => updateNode(selectedNode.id, { rotation: Number(event.target.value) || 0 })}
-                />
-              </div>
-              <div className="inspector-note">
-                <Sparkles size={15} />
-                <p>{selectedNode.locked ? "Element jest zablokowany. Odblokuj go na pasku zaznaczenia, aby go edytować." : "Przeciągnij element, uchwyty zmiany rozmiaru lub uchwyt obrotu. Przytrzymaj Shift, aby zachować proporcje i obracać bez przyciągania."}</p>
-              </div>
-            </div>
-          ) : selectedEdge ? (
-            <div className="inspector-content">
-              <div className="field-group"><label htmlFor="edge-label">Etykieta połączenia</label><input id="edge-label" value={selectedEdge.label ?? ""} onChange={(event) => updateEdge(selectedEdge.id, { label: event.target.value })} placeholder="Opis relacji" /></div>
-              <div className="field-group">
-                <label htmlFor="edge-style">Rodzaj łącznika</label>
-                <select id="edge-style" value={selectedEdge.connectorKind ?? "straight"} onChange={(event) => updateEdge(selectedEdge.id, { connectorKind: event.target.value as DiagramEdge["connectorKind"] })}>
-                  <option value="straight">Prosty</option><option value="elbow">Łamany</option><option value="curve">Krzywy</option>
-                </select>
-              </div>
-              <label className="settings-toggle"><input type="checkbox" checked={selectedEdge.autoRoute !== false} onChange={(event) => updateEdge(selectedEdge.id, { autoRoute: event.target.checked })} /><span>Omijaj pozostałe kształty</span></label>
-              <label className="settings-toggle"><input type="checkbox" checked={selectedEdge.arrowStart === true} onChange={(event) => updateEdge(selectedEdge.id, { arrowStart: event.target.checked })} /><span>Grot na początku</span></label>
-              <label className="settings-toggle"><input type="checkbox" checked={selectedEdge.arrowEnd !== false} onChange={(event) => updateEdge(selectedEdge.id, { arrowEnd: event.target.checked })} /><span>Grot na końcu</span></label>
-              <div className="inspector-note"><Spline size={15} /><p>Połączenie pozostaje przyłączone do kształtów podczas ich przesuwania.</p></div>
-            </div>
-          ) : selectedNodes.length > 1 ? (
-            <div className="inspector-content">
-              <div className="multi-selection-summary">
-                <Layers size={19} />
-                <strong>{selectedNodes.length} zaznaczone elementy</strong>
-                <span>{selectedNodes.filter((node) => node.locked).length} zablokowanych</span>
-              </div>
-              <div className="inspector-note">
-                <Sparkles size={15} />
-                <p>Przeciągnij zaznaczenie, aby przesunąć elementy razem. Użyj paska nad płótnem do wyrównania, rozłożenia i zmiany warstw.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="empty-inspector">
-              <div className="empty-inspector-icon"><MousePointer2 size={19} /></div>
-              <p>Zaznacz element, aby edytować jego właściwości.</p>
-            </div>
-          )}
-          <div className="inspector-footer">
-            <span className="keyboard-hint"><kbd>Shift+klik</kbd> wiele elementów</span>
-            <span className="keyboard-hint"><kbd>Ctrl+Z</kbd> cofanie zmian</span>
-          </div>
-        </aside>
+
       </div>
     </div>
   );

@@ -1,7 +1,9 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
-import type { Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, MeasurementUnit } from "../model";
+import { CornerDownRight, GitBranchPlus, Link2, Lock, Palette, Ruler, Tags, Trash2, Type, Unlock, Spline } from "lucide-react";
+import type { Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, InspectorSection, MeasurementUnit } from "../model";
 import { formatMeasurement } from "../units";
+import { shapeDefinition } from "../shapeLibrary";
 import { bezierPath, connectorGeometry, nodeBounds, nodeCenter, smoothCurve, type Point } from "../geometry";
 
 interface DiagramCanvasProps {
@@ -15,6 +17,12 @@ interface DiagramCanvasProps {
   connectMode: boolean;
   connectSourceId: string | null;
   selectedEdgeId: string | null;
+  activeInspectorSection: InspectorSection | null;
+  onOpenInspector: (section: InspectorSection) => void;
+  onAddChildNode: (id: string) => void;
+  onAddSiblingNode: (id: string) => void;
+  onToggleLockSelected: () => void;
+  onDeleteSelection: () => void;
   onCameraChange: (camera: Camera) => void;
   onSetSelection: (ids: string[]) => void;
   onMoveNodes: (updates: Partial<DiagramNode>[]) => void;
@@ -77,39 +85,59 @@ interface WorldBounds {
 }
 
 function shapeFor(node: DiagramNode) {
-  if (node.kind === "decision") {
-    const points = [
-      `${node.x + node.width / 2},${node.y}`,
-      `${node.x + node.width},${node.y + node.height / 2}`,
-      `${node.x + node.width / 2},${node.y + node.height}`,
-      `${node.x},${node.y + node.height / 2}`,
-    ].join(" ");
-    return <polygon points={points} className="node-shape decision-shape" style={shapeStyle(node)} />;
+  const { x, y, width: w, height: h } = node;
+  const right = x + w;
+  const bottom = y + h;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const style = shapeStyle(node);
+  const polygon = (points: string) => <polygon points={points} className="node-shape" style={style} />;
+  const rect = (rx = 14) => <rect x={x} y={y} width={w} height={h} rx={rx} className="node-shape" style={style} />;
+
+  if (node.kind === "decision" || node.kind === "preparation") {
+    const inset = node.kind === "decision" ? 0 : w * 0.18;
+    return polygon(`${cx},${y} ${right - inset},${cy} ${cx},${bottom} ${x + inset},${cy}`);
   }
-  if (node.kind === "ellipse") return <ellipse cx={node.x + node.width / 2} cy={node.y + node.height / 2} rx={node.width / 2} ry={node.height / 2} className="node-shape" style={shapeStyle(node)} />;
-  if (node.kind === "line") return <line x1={node.x} y1={node.y + node.height / 2} x2={node.x + node.width} y2={node.y + node.height / 2} className="standalone-line" style={{ stroke: node.stroke ?? "#8071d9", strokeWidth: node.strokeWidth ?? 2 }} />;
-  if (node.kind === "text" || node.kind === "freehand" || node.kind === "image") {
-    if (node.kind === "freehand") return <path d={bezierPath(node.pathPoints ?? [])} transform={`translate(${node.x} ${node.y})`} className="freehand-shape" style={{ stroke: node.stroke ?? "#5e50b4", strokeWidth: node.strokeWidth ?? 3 }} />;
-    if (node.kind === "image") return <><rect x={node.x} y={node.y} width={node.width} height={node.height} rx="6" className="image-frame" /><image x={node.x} y={node.y} width={node.width} height={node.height} href={node.imageData ?? node.imageSrc ?? ""} preserveAspectRatio="xMidYMid meet" /></>;
-    return null;
-  }
-  if (node.kind === "database") {
-    return <g className="node-shape" style={shapeStyle(node)}><path d={`M ${node.x} ${node.y + 18} V ${node.y + node.height - 18} C ${node.x} ${node.y + node.height + 2}, ${node.x + node.width} ${node.y + node.height + 2}, ${node.x + node.width} ${node.y + node.height - 18} V ${node.y + 18}`} /><ellipse cx={node.x + node.width / 2} cy={node.y + 18} rx={node.width / 2} ry="18" /><path d={`M ${node.x} ${node.y + 18} C ${node.x} ${node.y + 42}, ${node.x + node.width} ${node.y + 42}, ${node.x + node.width} ${node.y + 18}`} className="database-rim" /></g>;
-  }
-  if (node.kind === "document") {
-    return <path d={`M ${node.x} ${node.y} H ${node.x + node.width} V ${node.y + node.height - 14} Q ${node.x + node.width * 0.75} ${node.y + node.height + 8} ${node.x + node.width / 2} ${node.y + node.height - 8} Q ${node.x + node.width * 0.25} ${node.y + node.height - 24} ${node.x} ${node.y + node.height - 10} Z`} className="node-shape" style={shapeStyle(node)} />;
-  }
+  if (node.kind === "ellipse" || node.kind === "useCase" || node.kind === "connector") return <ellipse cx={cx} cy={cy} rx={w / 2} ry={h / 2} className="node-shape" style={style} />;
+  if (node.kind === "pill") return rect(h / 2);
+  if (node.kind === "hexagon") return polygon(`${x + w * 0.22},${y} ${x + w * 0.78},${y} ${right},${cy} ${x + w * 0.78},${bottom} ${x + w * 0.22},${bottom} ${x},${cy}`);
+  if (node.kind === "parallelogram" || node.kind === "inputOutput") return polygon(`${x + w * 0.2},${y} ${right},${y} ${right - w * 0.2},${bottom} ${x},${bottom}`);
+  if (node.kind === "manualInput") return polygon(`${x},${y + h * 0.2} ${right},${y} ${right},${bottom} ${x},${bottom}`);
+  if (node.kind === "line") return <line x1={x} y1={cy} x2={right} y2={cy} className="standalone-line" style={{ stroke: node.stroke ?? "#8071d9", strokeWidth: node.strokeWidth ?? 2 }} />;
+  if (node.kind === "text") return null;
+  if (node.kind === "freehand") return <path d={bezierPath(node.pathPoints ?? [])} transform={`translate(${x} ${y})`} className="freehand-shape" style={{ stroke: node.stroke ?? "#5e50b4", strokeWidth: node.strokeWidth ?? 3 }} />;
+  if (node.kind === "image") return <><rect x={x} y={y} width={w} height={h} rx="6" className="image-frame" /><image x={x} y={y} width={w} height={h} href={node.imageData ?? node.imageSrc ?? ""} preserveAspectRatio="xMidYMid meet" /></>;
+  if (node.kind === "cloud") return <path d={`M ${x + w * 0.2} ${y + h * 0.8} C ${x - w * 0.02} ${y + h * 0.78}, ${x - w * 0.02} ${y + h * 0.48}, ${x + w * 0.15} ${y + h * 0.4} C ${x + w * 0.12} ${y + h * 0.08}, ${x + w * 0.44} ${y - h * 0.02}, ${x + w * 0.54} ${y + h * 0.25} C ${x + w * 0.75} ${y + h * 0.08}, ${x + w * 0.98} ${y + h * 0.28}, ${x + w * 0.87} ${y + h * 0.48} C ${x + w * 1.08} ${y + h * 0.62}, ${x + w * 0.94} ${y + h * 0.88}, ${x + w * 0.75} ${y + h * 0.82} C ${x + w * 0.59} ${y + h * 1.05}, ${x + w * 0.36} ${y + h * 0.96}, ${x + w * 0.32} ${y + h * 0.82} Z`} className="node-shape" style={style} />;
+  if (node.kind === "note") return <path d={`M ${x} ${y} H ${right - 22} L ${right} ${y + 22} V ${bottom} H ${x} Z M ${right - 22} ${y} V ${y + 22} H ${right}`} className="node-shape uml-fold" style={style} />;
+  if (node.kind === "callout") return <path d={`M ${x} ${y} H ${right} V ${bottom - 24} H ${x + w * 0.36} L ${x + w * 0.24} ${bottom} L ${x + w * 0.22} ${bottom - 24} H ${x} Z`} className="node-shape" style={style} />;
+  if (node.kind === "subprocess") return <g><rect x={x} y={y} width={w} height={h} rx="5" className="node-shape" style={style} /><path d={`M ${x + 18} ${y} V ${bottom} M ${right - 18} ${y} V ${bottom}`} className="shape-symbol-line" style={{ stroke: node.stroke ?? "#d8d8e7" }} /></g>;
+  if (node.kind === "offPage") return polygon(`${x},${y} ${right},${y} ${right},${y + h * 0.68} ${cx},${bottom} ${x},${y + h * 0.68}`);
+  if (node.kind === "multiDocument") return <g><path d={`M ${x + 16} ${y + 10} H ${right - 8} V ${bottom - 26} Q ${x + w * 0.65} ${bottom - 7} ${x + w * 0.4} ${bottom - 23} Q ${x + w * 0.18} ${bottom - 8} ${x + 16} ${bottom - 24} Z`} className="node-shape" style={style} /><path d={`M ${x + 8} ${y + 5} H ${right - 16} V ${bottom - 30} M ${x} ${y} H ${right - 24} V ${bottom - 35}`} className="shape-symbol-line" style={{ stroke: node.stroke ?? "#d8d8e7" }} /><path d={`M ${x + w * 0.4} ${bottom - 23} Q ${x + w * 0.6} ${bottom - 6} ${x + w * 0.82} ${bottom - 25}`} className="shape-symbol-line" style={{ stroke: node.stroke ?? "#d8d8e7" }} /></g>;
+  if (node.kind === "database") return <g className="node-shape" style={style}><path d={`M ${x} ${y + 18} V ${bottom - 18} C ${x} ${bottom + 2}, ${right} ${bottom + 2}, ${right} ${bottom - 18} V ${y + 18}`} /><ellipse cx={cx} cy={y + 18} rx={w / 2} ry="18" /><path d={`M ${x} ${y + 18} C ${x} ${y + 42}, ${right} ${y + 42}, ${right} ${y + 18}`} className="database-rim" /></g>;
+  if (node.kind === "document") return <path d={`M ${x} ${y} H ${right} V ${bottom - 14} Q ${x + w * 0.75} ${bottom + 8} ${cx} ${bottom - 8} Q ${x + w * 0.25} ${bottom - 24} ${x} ${bottom - 10} Z`} className="node-shape" style={style} />;
   if (node.kind === "actor") {
-    const cx = node.x + node.width / 2;
-    const legEnd = node.y + node.height - 38;
-    return <g className="actor-symbol" style={{ stroke: node.stroke ?? "#8c7ce0" }}><circle cx={cx} cy={node.y + 24} r="14" /><path d={`M ${cx} ${node.y + 38} V ${node.y + 72} M ${cx - 26} ${node.y + 50} H ${cx + 26} M ${cx} ${node.y + 72} L ${cx - 22} ${legEnd} M ${cx} ${node.y + 72} L ${cx + 22} ${legEnd}`} /></g>;
+    const legEnd = bottom - 38;
+    return <g className="actor-symbol" style={{ stroke: node.stroke ?? "#8c7ce0" }}><circle cx={cx} cy={y + 24} r="14" /><path d={`M ${cx} ${y + 38} V ${y + 72} M ${cx - 26} ${y + 50} H ${cx + 26} M ${cx} ${y + 72} L ${cx - 22} ${legEnd} M ${cx} ${y + 72} L ${cx + 22} ${legEnd}`} /></g>;
   }
-  return (
-    <>
-      <rect x={node.x} y={node.y} width={node.width} height={node.height} rx={node.kind === "class" ? 12 : 16} className="node-shape" style={shapeStyle(node)} />
-      {node.kind === "class" && <path d={`M ${node.x} ${node.y + 48} H ${node.x + node.width}`} className="class-divider" />}
-    </>
-  );
+  if (node.kind === "package") return <g><path d={`M ${x} ${y + 26} H ${x + 70} L ${x + 85} ${y + 43} H ${right} V ${bottom} H ${x} Z M ${x} ${y + 43} H ${x + 85}`} className="node-shape" style={style} /></g>;
+  if (node.kind === "component") return <g><rect x={x + 15} y={y} width={w - 15} height={h} rx="5" className="node-shape" style={style} /><rect x={x} y={y + h * 0.34} width="22" height="18" className="node-shape" style={style} /><rect x={x} y={y + h * 0.54} width="22" height="18" className="node-shape" style={style} /></g>;
+  if (node.kind === "artifact") return <path d={`M ${x} ${y} H ${right - 24} L ${right} ${y + 24} V ${bottom} H ${x} Z M ${right - 24} ${y} V ${y + 24} H ${right}`} className="node-shape uml-fold" style={style} />;
+  if (node.kind === "deploymentNode") return <g><path d={`M ${x + 25} ${y + 25} L ${cx} ${y} L ${right - 25} ${y + 25} L ${cx} ${y + 50} Z M ${x + 25} ${y + 25} V ${bottom - 25} L ${cx} ${bottom} V ${y + 50} M ${right - 25} ${y + 25} V ${bottom - 25} L ${cx} ${bottom}`} className="node-shape" style={style} /></g>;
+  if (node.kind === "boundary" || node.kind === "control" || node.kind === "entity") return <g><rect x={x} y={y} width={w} height={h} rx="9" className="node-shape" style={style} /><path d={`M ${x} ${y + 44} H ${right}`} className="class-divider" /><circle cx={x + 20} cy={y + 21} r="12" className="uml-role-symbol" style={{ stroke: node.stroke ?? "#d8d8e7" }} /><text x={x + 20} y={y + 25} className="uml-role-letter">{node.kind === "boundary" ? "B" : node.kind === "control" ? "C" : "E"}</text></g>;
+  if (node.kind === "initialState") return <circle cx={cx} cy={cy} r={Math.min(w, h) * 0.34} className="uml-state-fill" style={{ fill: node.fill ?? "#38364c", stroke: node.stroke ?? "#38364c" }} />;
+  if (node.kind === "finalState") return <g><circle cx={cx} cy={cy} r={Math.min(w, h) * 0.38} className="node-shape" style={style} /><circle cx={cx} cy={cy} r={Math.min(w, h) * 0.25} className="uml-state-fill" style={{ fill: node.fill ?? "#38364c", stroke: node.stroke ?? "#38364c" }} /></g>;
+  if (node.kind === "state") return rect(15);
+  if (node.kind === "forkJoin") return <rect x={x} y={cy - Math.max(5, h * 0.14)} width={w} height={Math.max(10, h * 0.28)} rx="5" className="uml-state-fill" style={{ fill: node.fill ?? node.stroke ?? "#514f66", stroke: node.stroke ?? "#514f66" }} />;
+  if (node.kind === "lifeline") return <g><rect x={x} y={y} width={w} height="42" rx="7" className="node-shape" style={style} /><line x1={cx} x2={cx} y1={y + 42} y2={bottom} className="uml-lifeline" style={{ stroke: node.stroke ?? "#b9b7c8" }} /></g>;
+  if (node.kind === "activation") return <rect x={cx - Math.min(w * 0.25, 17)} y={y} width={Math.min(w * 0.5, 34)} height={h} rx="3" className="node-shape" style={style} />;
+  if (node.kind === "providedInterface") return <g><line x1={x + 15} y1={cy} x2={cx} y2={cy} className="shape-symbol-line" style={{ stroke: node.stroke ?? "#d8d8e7" }} /><circle cx={cx + 16} cy={cy} r={Math.min(w, h) * 0.32} className="node-shape" style={style} /></g>;
+  if (node.kind === "requiredInterface") return <g><line x1={x + 15} y1={cy} x2={cx + 12} y2={cy} className="shape-symbol-line" style={{ stroke: node.stroke ?? "#d8d8e7" }} /><path d={`M ${cx + 12} ${cy - h * 0.28} A ${h * 0.28} ${h * 0.28} 0 0 0 ${cx + 12} ${cy + h * 0.28}`} className="shape-symbol-line" style={{ stroke: node.stroke ?? "#d8d8e7" }} /></g>;
+
+  const classLike = ["class", "interface", "abstractClass"].includes(node.kind);
+  return <g>
+    <rect x={x} y={y} width={w} height={h} rx={classLike ? 8 : 16} className="node-shape" style={style} />
+    {(classLike || node.kind === "boundary" || node.kind === "control" || node.kind === "entity") && <path d={`M ${x} ${y + 48} H ${right}`} className="class-divider" />}
+  </g>;
 }
 
 function shapeStyle(node: DiagramNode) {
@@ -125,13 +153,15 @@ interface DiagramNodeViewProps {
 }
 
 const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectSource, showConnectHandles, hasChildren }: DiagramNodeViewProps) {
-  const titleY = node.kind === "class" ? node.y + 30 : node.kind === "actor" ? node.y + node.height - 18 : node.y + node.height / 2 - 8;
-  const detailY = node.kind === "class" ? node.y + 70 : node.kind === "actor" ? node.y + node.height - 2 : node.y + node.height / 2 + 18;
+  const umlClassifier = node.kind === "class" || node.kind === "interface" || node.kind === "abstractClass" || node.kind === "boundary" || node.kind === "control" || node.kind === "entity";
+  const labelBelowSymbol = node.kind === "connector" || node.kind === "initialState" || node.kind === "finalState" || node.kind === "providedInterface" || node.kind === "requiredInterface";
+  const titleY = umlClassifier ? node.y + 30 : node.kind === "actor" ? node.y + node.height - 18 : node.kind === "lifeline" ? node.y + 26 : labelBelowSymbol ? node.y + node.height + 17 : node.y + node.height / 2 - 8;
+  const detailY = umlClassifier ? node.y + 70 : node.kind === "actor" ? node.y + node.height - 2 : labelBelowSymbol ? node.y + node.height + 34 : node.y + node.height / 2 + 18;
   const detailLines = node.detail.split("\n");
   const textNodeLines = [...node.title.split("\n"), ...(node.detail ? node.detail.split("\n") : [])];
-  const textAnchor = node.textAlign === "left" ? "start" : node.textAlign === "right" ? "end" : "middle";
-  const textX = node.textAlign === "left" ? node.x + 12 : node.textAlign === "right" ? node.x + node.width - 12 : node.x + node.width / 2;
-  const textStyle = { fill: node.textColor ?? "#302f43", fontSize: node.fontSize ?? 15, fontWeight: node.fontWeight ?? (node.kind === "text" ? "normal" : "650"), fontStyle: node.fontStyle ?? "normal", textAnchor } as const;
+  const textAnchor = node.kind === "boundary" || node.kind === "control" || node.kind === "entity" ? "start" : node.textAlign === "left" ? "start" : node.textAlign === "right" ? "end" : "middle";
+  const textX = node.kind === "boundary" || node.kind === "control" || node.kind === "entity" ? node.x + 40 : node.textAlign === "left" ? node.x + 12 : node.textAlign === "right" ? node.x + node.width - 12 : node.x + node.width / 2;
+  const textStyle = { fill: node.textColor ?? "#302f43", fontSize: node.fontSize ?? 15, fontWeight: node.fontWeight ?? (node.kind === "text" ? "normal" : "650"), fontStyle: node.fontStyle ?? (node.kind === "abstractClass" ? "italic" : "normal"), textAnchor } as const;
   const ports = [
     ["top", node.x + node.width / 2, node.y], ["right", node.x + node.width, node.y + node.height / 2],
     ["bottom", node.x + node.width / 2, node.y + node.height], ["left", node.x, node.y + node.height / 2],
@@ -143,12 +173,12 @@ const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectS
       transform={node.rotation ? `rotate(${node.rotation} ${node.x + node.width / 2} ${node.y + node.height / 2})` : undefined}
       role="button"
       tabIndex={0}
-      aria-label={`${node.title}, ${node.kind === "class" ? "klasa UML" : node.kind === "decision" ? "decyzja" : "proces"}`}
+      aria-label={`${node.title}, ${shapeDefinition(node.kind)?.title ?? node.kind}`}
       aria-pressed={selected}
     >
       {shapeFor(node)}
-      {node.kind === "text" ? <text x={textX} y={node.y + (node.fontSize ?? 18)} className="text-node-content" style={textStyle}>{textNodeLines.map((line, index) => <tspan key={`${node.id}-text-${index}`} x={textX} dy={index === 0 ? 0 : (node.fontSize ?? 18) * 1.25}>{line}</tspan>)}</text> : node.kind !== "image" && node.kind !== "freehand" && node.kind !== "line" && node.title && <text x={textX} y={titleY} className="node-title" style={textStyle}>{node.title}</text>}
-      {node.kind !== "text" && node.kind !== "image" && node.kind !== "freehand" && node.kind !== "line" && <text x={textX} y={detailY} className="node-detail" style={{ ...textStyle, fill: node.textColor ?? "#858398", fontSize: node.fontSize ? Math.max(9, node.fontSize - 4) : 11 }}>
+      {node.kind === "text" ? <text x={textX} y={node.y + (node.fontSize ?? 18)} className="text-node-content" style={textStyle}>{textNodeLines.map((line, index) => <tspan key={`${node.id}-text-${index}`} x={textX} dy={index === 0 ? 0 : (node.fontSize ?? 18) * 1.25}>{line}</tspan>)}</text> : node.kind !== "image" && node.kind !== "freehand" && node.kind !== "line" && node.kind !== "forkJoin" && node.kind !== "activation" && node.title && <text x={textX} y={titleY} className={`node-title${node.kind === "abstractClass" ? " is-italic" : ""}`} style={textStyle}>{node.title}</text>}
+      {node.kind !== "text" && node.kind !== "image" && node.kind !== "freehand" && node.kind !== "line" && node.kind !== "forkJoin" && node.kind !== "activation" && <text x={textX} y={detailY} className="node-detail" style={{ ...textStyle, fill: node.textColor ?? "#858398", fontSize: node.fontSize ? Math.max(9, node.fontSize - 4) : 11 }}>
         {detailLines.map((line, index) => <tspan key={`${node.id}-detail-${index}`} x={textX} dy={index === 0 ? 0 : 18}>{line}</tspan>)}
       </text>}
       {node.locked && (
@@ -335,6 +365,66 @@ function SelectionOverlay({ bounds, camera }: { bounds: WorldBounds | null; came
   );
 }
 
+function ObjectContextToolbar({
+  node,
+  edgeSelected,
+  activeSection,
+  position,
+  onOpenInspector,
+  onAddChild,
+  onAddSibling,
+  onToggleLock,
+  onDelete,
+}: {
+  node: DiagramNode | null;
+  edgeSelected: boolean;
+  activeSection: InspectorSection | null;
+  position: { left: number; top: number };
+  onOpenInspector: (section: InspectorSection) => void;
+  onAddChild: () => void;
+  onAddSibling: () => void;
+  onToggleLock: () => void;
+  onDelete: () => void;
+}) {
+  if (!node && !edgeSelected) return null;
+  const nodeOptions: { section: InspectorSection; label: string; icon: typeof Type }[] = [
+    { section: "content", label: "Edytuj treść", icon: Type },
+    { section: "style", label: "Zmień wygląd", icon: Palette },
+    { section: "size", label: "Wymiary i obrót", icon: Ruler },
+    { section: "details", label: "Etykiety i notatki", icon: Tags },
+    { section: "link", label: "Odnośniki", icon: Link2 },
+  ];
+  const edgeOptions: { section: InspectorSection; label: string; icon: typeof Type }[] = [
+    { section: "content", label: "Etykieta połączenia", icon: Type },
+    { section: "style", label: "Styl połączenia", icon: Spline },
+  ];
+  const options = edgeSelected ? edgeOptions : nodeOptions;
+
+  return (
+    <div
+      className="object-context-toolbar"
+      style={{ left: position.left, top: position.top }}
+      role="toolbar"
+      aria-label="Opcje zaznaczonego obiektu"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {options.map(({ section, label, icon: Icon }) => (
+        <button key={section} type="button" className={activeSection === section ? "active" : ""} aria-label={label} title={label} aria-pressed={activeSection === section} onClick={() => onOpenInspector(section)}>
+          <Icon size={15} />
+        </button>
+      ))}
+      {node && <>
+        <span className="object-context-divider" />
+        <button type="button" aria-label="Dodaj podgałąź" title="Dodaj podgałąź (Tab)" disabled={node.locked} onClick={onAddChild}><GitBranchPlus size={15} /></button>
+        <button type="button" aria-label="Dodaj element na tym samym poziomie" title="Dodaj element na tym samym poziomie (Enter)" disabled={node.locked} onClick={onAddSibling}><CornerDownRight size={15} /></button>
+        <button type="button" aria-label={node.locked ? "Odblokuj element" : "Zablokuj element"} title={node.locked ? "Odblokuj element" : "Zablokuj element"} onClick={onToggleLock}>{node.locked ? <Unlock size={15} /> : <Lock size={15} />}</button>
+      </>}
+      <button type="button" className="context-delete-button" aria-label="Usuń zaznaczony obiekt" title="Usuń zaznaczony obiekt" disabled={Boolean(node?.locked)} onClick={onDelete}><Trash2 size={15} /></button>
+    </div>
+  );
+}
+
 function rotatePoint(point: Point, center: Point, degrees: number): Point {
   const radians = degrees * Math.PI / 180;
   const dx = point.x - center.x;
@@ -484,6 +574,12 @@ export default function DiagramCanvas({
   connectMode,
   connectSourceId,
   selectedEdgeId,
+  activeInspectorSection,
+  onOpenInspector,
+  onAddChildNode,
+  onAddSiblingNode,
+  onToggleLockSelected,
+  onDeleteSelection,
   onCameraChange,
   onSetSelection,
   onMoveNodes,
@@ -511,6 +607,26 @@ export default function DiagramCanvas({
   const selectedNodes = nodes.filter((node) => selectedNodeIds.includes(node.id));
   const movableSelectedNodes = selectedNodes.filter((node) => !node.locked);
   const selectionBounds = boundsForNodes(movableSelectedNodes);
+  const contextBounds = boundsForNodes(selectedNodes);
+  const selectedContextNode = selectedNodeIds.length === 1 ? selectedNodes[0] ?? null : null;
+  const selectedContextEdge = selectedNodeIds.length === 0 ? edges.find((edge) => edge.id === selectedEdgeId) ?? null : null;
+  const contextEdgeFrom = selectedContextEdge ? nodeById.get(selectedContextEdge.from) : undefined;
+  const contextEdgeTo = selectedContextEdge ? nodeById.get(selectedContextEdge.to) : undefined;
+  const contextWorldPoint = contextBounds
+    ? { x: contextBounds.left + contextBounds.width / 2, y: contextBounds.top }
+    : contextEdgeFrom && contextEdgeTo
+      ? { x: (nodeCenter(contextEdgeFrom).x + nodeCenter(contextEdgeTo).x) / 2, y: (nodeCenter(contextEdgeFrom).y + nodeCenter(contextEdgeTo).y) / 2 }
+      : null;
+  const frameWidth = viewport.width * viewport.scale;
+  const contextScreenX = contextWorldPoint ? (camera.x + contextWorldPoint.x * camera.zoom - viewport.originX) * viewport.scale : 0;
+  const frameHeight = viewport.height * viewport.scale;
+  const contextScreenY = contextWorldPoint ? (camera.y + contextWorldPoint.y * camera.zoom - viewport.originY) * viewport.scale : 0;
+  const contextBottomY = contextBounds ? (camera.y + (contextBounds.top + contextBounds.height) * camera.zoom - viewport.originY) * viewport.scale : contextScreenY;
+  const contextIsVisible = Boolean(contextWorldPoint && contextScreenX >= 0 && contextScreenX <= frameWidth && contextScreenY <= frameHeight && contextBottomY >= 0);
+  const contextToolbarPosition = contextIsVisible ? {
+    left: Math.max(Math.min(frameWidth / 2, 185), Math.min(frameWidth - Math.min(frameWidth / 2, 185), contextScreenX)),
+    top: Math.max(8, Math.min(frameHeight - 48, contextScreenY - 48)),
+  } : null;
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -1070,6 +1186,17 @@ export default function DiagramCanvas({
         )}
         {settings.showRulers && <Rulers camera={camera} unit={settings.unit} viewport={viewport} />}
       </svg>
+      {contextToolbarPosition && (selectedContextNode || selectedContextEdge) && <ObjectContextToolbar
+        node={selectedContextNode}
+        edgeSelected={Boolean(selectedContextEdge)}
+        activeSection={activeInspectorSection}
+        position={contextToolbarPosition}
+        onOpenInspector={onOpenInspector}
+        onAddChild={() => { if (selectedContextNode) onAddChildNode(selectedContextNode.id); }}
+        onAddSibling={() => { if (selectedContextNode) onAddSiblingNode(selectedContextNode.id); }}
+        onToggleLock={onToggleLockSelected}
+        onDelete={onDeleteSelection}
+      />}
       {settings.showMinimap && <MiniMap nodes={nodes} edges={edges} camera={camera} viewport={viewport} onCameraChange={onCameraChange} />}
       <div className="canvas-zoom" aria-label="Sterowanie powiększeniem">
         <button type="button" aria-label="Pomniejsz" onClick={() => updateZoom(camera.zoom - 0.1)}>−</button>

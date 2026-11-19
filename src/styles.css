@@ -548,6 +548,12 @@ select:focus-visible {
   line-height: 1;
 }
 
+.shape-library-glyph svg {
+  width: 30px;
+  height: 26px;
+  overflow: visible;
+}
+
 .glyph-actor { font-size: 21px; }
 .glyph-text { font-family: Georgia, serif; font-weight: 700; }
 .glyph-freehand { font-size: 27px; }
@@ -1790,4 +1796,182 @@ kbd {
     width: min(330px, calc(100% - 40px));
     max-height: calc(100% - 40px);
   }
+}
+
+/* Contextual object editing and the left side property panel. */
+.workspace { position: relative; }
+
+.inspector {
+  flex-basis: 286px;
+  border-right: 1px solid var(--line);
+  border-left: 0;
+  box-shadow: 3px 0 14px #302e4508;
+}
+
+.inspector-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.inspector-hint {
+  margin: -8px 0 0;
+  color: #9998a9;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.inspector-dimensions-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.external-link-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.shape-library-categories {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 9px 11px 2px;
+  scrollbar-width: none;
+}
+
+.shape-library-categories::-webkit-scrollbar { display: none; }
+
+.shape-library-categories button {
+  flex: 0 0 auto;
+  min-height: 27px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #f8f8fb;
+  color: #77768b;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.shape-library-categories button:hover,
+.shape-library-categories button.active {
+  border-color: #ded8fb;
+  background: #f2efff;
+  color: var(--purple-dark);
+}
+
+.object-context-toolbar {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  padding: 4px;
+  border: 1px solid #e6e4ef;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 5px 18px #302e4524;
+  transform: translateX(-50%);
+  scrollbar-width: none;
+}
+
+.object-context-toolbar::-webkit-scrollbar { display: none; }
+
+.object-context-toolbar button {
+  display: inline-flex;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 29px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #77768b;
+  cursor: pointer;
+}
+
+.object-context-toolbar button:hover:not(:disabled),
+.object-context-toolbar button.active {
+  background: #f0edff;
+  color: var(--purple-dark);
+}
+
+.object-context-toolbar button.context-delete-button:hover:not(:disabled) {
+  background: #fff0f0;
+  color: #c54654;
+}
+
+.object-context-toolbar button:disabled { cursor: default; opacity: 0.38; }
+
+.object-context-divider {
+  width: 1px;
+  height: 20px;
+  flex: 0 0 1px;
+  margin: 0 2px;
+  background: #e9e8f0;
+}
+
+.shape-symbol-line,
+.uml-fold,
+.uml-lifeline {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.uml-fold { fill: #fff; }
+.uml-lifeline { stroke-dasharray: 5 5; }
+
+.uml-role-symbol {
+  fill: #fff;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.uml-role-letter {
+  fill: #77748e;
+  font-size: 9px;
+  font-weight: 700;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.uml-state-fill {
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagram-node.is-selected .uml-state-fill { stroke: var(--purple); }
+.node-title.is-italic { font-style: italic; }
+
+@media (max-width: 850px) {
+  .inspector {
+    position: absolute;
+    top: 0;
+    right: auto;
+    bottom: 0;
+    left: 62px;
+    z-index: 6;
+    width: min(286px, calc(100vw - 112px));
+    max-height: none;
+    border: 1px solid var(--line);
+    border-radius: 0 13px 13px 0;
+    box-shadow: 10px 0 30px #302e4520;
+  }
+}
+
+@media (max-width: 620px) {
+  .inspector {
+    top: auto;
+    bottom: 0;
+    left: 50px;
+    width: min(286px, calc(100vw - 60px));
+    max-height: min(76vh, 620px);
+    border-radius: 13px 13px 0 0;
+  }
+
+  .inspector-heading { flex-basis: 62px; }
+  .inspector-footer { display: none; }
 }

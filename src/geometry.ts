@@ -35,7 +35,7 @@ function attachPoint(node: DiagramNode, toward: Point): Point {
   const halfW = Math.max(1, node.width / 2);
   const halfH = Math.max(1, node.height / 2);
   let scale: number;
-  if (node.kind === "ellipse") {
+  if (node.kind === "ellipse" || node.kind === "useCase" || node.kind === "connector") {
     scale = 1 / Math.sqrt((dx / halfW) ** 2 + (dy / halfH) ** 2 || 1);
   } else if (node.kind === "decision") {
     scale = 1 / (Math.abs(dx) / halfW + Math.abs(dy) / halfH || 1);

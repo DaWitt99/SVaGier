@@ -1,4 +1,11 @@
-export type ShapeKind = "process" | "decision" | "class" | "ellipse" | "line" | "text" | "database" | "document" | "actor" | "freehand" | "image";
+export type ShapeKind =
+  | "process" | "decision" | "class" | "ellipse" | "line" | "text" | "database" | "document" | "actor"
+  | "cloud" | "pill" | "note" | "callout" | "hexagon" | "parallelogram"
+  | "subprocess" | "inputOutput" | "manualInput" | "preparation" | "connector" | "offPage" | "multiDocument"
+  | "useCase" | "interface" | "abstractClass" | "package" | "component" | "artifact" | "deploymentNode"
+  | "boundary" | "control" | "entity" | "initialState" | "finalState" | "state" | "forkJoin" | "lifeline"
+  | "activation" | "providedInterface" | "requiredInterface" | "freehand" | "image";
+export type InspectorSection = "content" | "style" | "size" | "details" | "link";
 export type MindMapLayout = "manual" | "tree" | "radial" | "horizontal";
 export type NodePriority = "low" | "medium" | "high";
 
