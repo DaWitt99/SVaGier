@@ -1,31 +1,55 @@
 import { memo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
-import type { DiagramEdge, DiagramNode } from "../model";
+import type { Camera, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, MeasurementUnit } from "../model";
+import { formatMeasurement } from "../units";
 
 interface DiagramCanvasProps {
   nodes: DiagramNode[];
   edges: DiagramEdge[];
+  settings: EditorSettings;
+  camera: Camera;
   selectedNodeId: string | null;
   connectMode: boolean;
   connectSourceId: string | null;
+  onCameraChange: (camera: Camera) => void;
   onSelectNode: (id: string) => void;
   onMoveNode: (id: string, x: number, y: number) => void;
   onConnectNode: (id: string) => void;
   onClearSelection: () => void;
+  onAddGuide: (axis: GuideAxis, position: number) => string;
+  onMoveGuide: (id: string, position: number) => void;
 }
 
-interface Camera {
-  x: number;
-  y: number;
-  zoom: number;
-}
+export const CANVAS_WIDTH = 1440;
+export const CANVAS_HEIGHT = 900;
+const RULER_SIZE = 25;
+const MIN_ZOOM = 0.06;
+const MAX_ZOOM = 4;
 
 type DragSession =
   | { type: "pan"; pointerId: number; startX: number; startY: number; cameraX: number; cameraY: number }
-  | { type: "node"; pointerId: number; nodeId: string; offsetX: number; offsetY: number };
+  | { type: "node"; pointerId: number; nodeId: string; offsetX: number; offsetY: number }
+  | { type: "guide"; pointerId: number; guideId: string; axis: GuideAxis };
 
-const WIDTH = 1440;
-const HEIGHT = 900;
+interface ScreenPoint {
+  x: number;
+  y: number;
+}
+
+interface PinchSession {
+  pointerIds: [number, number];
+  startDistance: number;
+  startZoom: number;
+  worldX: number;
+  worldY: number;
+}
+
+interface WorldBounds {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
 
 function shapeFor(node: DiagramNode) {
   if (node.kind === "decision") {
@@ -40,20 +64,8 @@ function shapeFor(node: DiagramNode) {
 
   return (
     <>
-      <rect
-        x={node.x}
-        y={node.y}
-        width={node.width}
-        height={node.height}
-        rx={node.kind === "class" ? 12 : 16}
-        className="node-shape"
-      />
-      {node.kind === "class" && (
-        <path
-          d={`M ${node.x} ${node.y + 48} H ${node.x + node.width}`}
-          className="class-divider"
-        />
-      )}
+      <rect x={node.x} y={node.y} width={node.width} height={node.height} rx={node.kind === "class" ? 12 : 16} className="node-shape" />
+      {node.kind === "class" && <path d={`M ${node.x} ${node.y + 48} H ${node.x + node.width}`} className="class-divider" />}
     </>
   );
 }
@@ -78,15 +90,9 @@ const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectS
       aria-pressed={selected}
     >
       {shapeFor(node)}
-      <text x={node.x + node.width / 2} y={titleY} className="node-title">
-        {node.title}
-      </text>
+      <text x={node.x + node.width / 2} y={titleY} className="node-title">{node.title}</text>
       <text x={node.x + node.width / 2} y={detailY} className="node-detail">
-        {detailLines.map((line, index) => (
-          <tspan key={`${node.id}-detail-${index}`} x={node.x + node.width / 2} dy={index === 0 ? 0 : 18}>
-            {line}
-          </tspan>
-        ))}
+        {detailLines.map((line, index) => <tspan key={`${node.id}-detail-${index}`} x={node.x + node.width / 2} dy={index === 0 ? 0 : 18}>{line}</tspan>)}
       </text>
     </g>
   );
@@ -105,23 +111,231 @@ const DiagramEdgeView = memo(function DiagramEdgeView({ from, to }: DiagramEdgeV
   return <path d={`M ${x1} ${y1} L ${x2} ${y2}`} className="diagram-edge" markerEnd="url(#arrowhead)" />;
 });
 
+function clampZoom(zoom: number): number {
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
+}
+
+function niceWorldStep(zoom: number): number {
+  const target = 72 / zoom;
+  const power = 10 ** Math.floor(Math.log10(target));
+  for (const factor of [1, 2, 5, 10]) {
+    const step = factor * power;
+    if (step >= target) return step;
+  }
+  return 10 * power;
+}
+
+function GridPattern({ settings, camera }: { settings: EditorSettings; camera: Camera }) {
+  const size = Math.max(1, settings.gridSpacingPx);
+  const width = settings.gridStyle === "isometric" ? size * 2 : size;
+  const height = settings.gridStyle === "isometric" ? size * Math.sqrt(3) : size;
+  const transform = `translate(${camera.x} ${camera.y}) scale(${camera.zoom})`;
+
+  if (settings.gridStyle === "dots") {
+    return (
+      <pattern id="grid-pattern" width={width} height={height} patternUnits="userSpaceOnUse" patternTransform={transform}>
+        <circle cx="1.1" cy="1.1" r="1" fill="#dedde9" />
+      </pattern>
+    );
+  }
+  if (settings.gridStyle === "lines") {
+    return (
+      <pattern id="grid-pattern" width={width} height={height} patternUnits="userSpaceOnUse" patternTransform={transform}>
+        <path d={`M ${width} 0 H 0 V ${height}`} fill="none" stroke="#e5e4ee" strokeWidth="0.7" />
+      </pattern>
+    );
+  }
+  return (
+    <pattern id="grid-pattern" width={width} height={height} patternUnits="userSpaceOnUse" patternTransform={transform}>
+      <path d={`M 0 ${height / 2} L ${size} 0 L ${width} ${height / 2} L ${size} ${height} Z M ${size} 0 V ${height}`} fill="none" stroke="#e5e4ee" strokeWidth="0.7" />
+    </pattern>
+  );
+}
+
+function Rulers({ camera, unit }: { camera: Camera; unit: MeasurementUnit }) {
+  const step = niceWorldStep(camera.zoom);
+  const verticalStart = (RULER_SIZE - camera.x) / camera.zoom;
+  const horizontalStart = (RULER_SIZE - camera.y) / camera.zoom;
+  const verticalEnd = (CANVAS_WIDTH - camera.x) / camera.zoom;
+  const horizontalEnd = (CANVAS_HEIGHT - camera.y) / camera.zoom;
+  const xTicks: { value: number; screen: number }[] = [];
+  const yTicks: { value: number; screen: number }[] = [];
+
+  for (let value = Math.ceil(verticalStart / step) * step, count = 0; value <= verticalEnd && count < 300; value += step, count++) {
+    xTicks.push({ value, screen: camera.x + value * camera.zoom });
+  }
+  for (let value = Math.ceil(horizontalStart / step) * step, count = 0; value <= horizontalEnd && count < 300; value += step, count++) {
+    yTicks.push({ value, screen: camera.y + value * camera.zoom });
+  }
+
+  return (
+    <g className="canvas-rulers">
+      <rect x={RULER_SIZE} y="0" width={CANVAS_WIDTH - RULER_SIZE} height={RULER_SIZE} className="ruler-surface" data-ruler-axis="vertical" />
+      <rect x="0" y={RULER_SIZE} width={RULER_SIZE} height={CANVAS_HEIGHT - RULER_SIZE} className="ruler-surface" data-ruler-axis="horizontal" />
+      <rect x="0" y="0" width={RULER_SIZE} height={RULER_SIZE} className="ruler-corner" />
+      {xTicks.map(({ value, screen }) => (
+        <g key={`x-${value}`}>
+          <line x1={screen} x2={screen} y1={RULER_SIZE - 6} y2={RULER_SIZE} className="ruler-tick" />
+          <text x={screen + 3} y="10" className="ruler-label" data-ruler-axis="vertical">{formatMeasurement(value, unit)}</text>
+          <rect x={screen - 6} y="12" width="12" height="12" className="ruler-hit-area" data-ruler-axis="vertical" />
+        </g>
+      ))}
+      {yTicks.map(({ value, screen }) => (
+        <g key={`y-${value}`}>
+          <line x1={RULER_SIZE - 6} x2={RULER_SIZE} y1={screen} y2={screen} className="ruler-tick" />
+          <text x="3" y={screen - 3} className="ruler-label" data-ruler-axis="horizontal">{formatMeasurement(value, unit)}</text>
+          <rect x="0" y={screen - 6} width={RULER_SIZE} height="12" className="ruler-hit-area" data-ruler-axis="horizontal" />
+        </g>
+      ))}
+    </g>
+  );
+}
+
+function GuideOverlays({ guides, camera }: { guides: Guide[]; camera: Camera }) {
+  return (
+    <g className="canvas-guides">
+      {guides.map((guide) => {
+        const position = guide.position * camera.zoom + (guide.axis === "vertical" ? camera.x : camera.y);
+        return (
+          <g key={guide.id} data-guide-id={guide.id} className="canvas-guide">
+            {guide.axis === "vertical" ? (
+              <>
+                <line x1={position} x2={position} y1={0} y2={CANVAS_HEIGHT} className="guide-hit-area" />
+                <line x1={position} x2={position} y1={0} y2={CANVAS_HEIGHT} className="guide-line" />
+              </>
+            ) : (
+              <>
+                <line x1={0} x2={CANVAS_WIDTH} y1={position} y2={position} className="guide-hit-area" />
+                <line x1={0} x2={CANVAS_WIDTH} y1={position} y2={position} className="guide-line" />
+              </>
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+function distance(a: ScreenPoint, b: ScreenPoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function getMinimapBounds(nodes: DiagramNode[], camera: Camera): WorldBounds {
+  const viewLeft = -camera.x / camera.zoom;
+  const viewTop = -camera.y / camera.zoom;
+  const viewRight = viewLeft + CANVAS_WIDTH / camera.zoom;
+  const viewBottom = viewTop + CANVAS_HEIGHT / camera.zoom;
+  const left = Math.min(viewLeft, ...nodes.map((node) => node.x));
+  const top = Math.min(viewTop, ...nodes.map((node) => node.y));
+  const right = Math.max(viewRight, ...nodes.map((node) => node.x + node.width));
+  const bottom = Math.max(viewBottom, ...nodes.map((node) => node.y + node.height));
+  const marginX = Math.max(60, (right - left) * 0.06);
+  const marginY = Math.max(60, (bottom - top) * 0.06);
+  return { left: left - marginX, top: top - marginY, width: right - left + marginX * 2, height: bottom - top + marginY * 2 };
+}
+
+function MiniMap({ nodes, edges, camera, onCameraChange }: {
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+  camera: Camera;
+  onCameraChange: (camera: Camera) => void;
+}) {
+  const [dragBounds, setDragBounds] = useState<WorldBounds | null>(null);
+  const bounds = dragBounds ?? getMinimapBounds(nodes, camera);
+  const width = 190;
+  const height = 126;
+  const pad = 8;
+  const scale = Math.min((width - pad * 2) / bounds.width, (height - pad * 2) / bounds.height);
+  const worldToMini = (x: number, y: number) => ({ x: pad + (x - bounds.left) * scale, y: pad + (y - bounds.top) * scale });
+  const viewLeft = -camera.x / camera.zoom;
+  const viewTop = -camera.y / camera.zoom;
+  const viewWidth = CANVAS_WIDTH / camera.zoom;
+  const viewHeight = CANVAS_HEIGHT / camera.zoom;
+  const miniView = worldToMini(viewLeft, viewTop);
+  const mapNode = new Map(nodes.map((node) => [node.id, node]));
+
+  function centerCamera(event: ReactPointerEvent<SVGSVGElement>, mapBounds: WorldBounds) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const miniX = ((event.clientX - rect.left) / rect.width) * width;
+    const miniY = ((event.clientY - rect.top) / rect.height) * height;
+    const mapScale = Math.min((width - pad * 2) / mapBounds.width, (height - pad * 2) / mapBounds.height);
+    const worldX = mapBounds.left + (miniX - pad) / mapScale;
+    const worldY = mapBounds.top + (miniY - pad) / mapScale;
+    onCameraChange({ x: CANVAS_WIDTH / 2 - worldX * camera.zoom, y: CANVAS_HEIGHT / 2 - worldY * camera.zoom, zoom: camera.zoom });
+  }
+
+  return (
+    <div className="minimap-wrap">
+      <svg
+        className="canvas-minimap"
+        viewBox={`0 0 ${width} ${height}`}
+        role="application"
+        aria-label="Miniatura płótna — kliknij lub przeciągnij, aby zmienić widok"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setDragBounds(bounds);
+          centerCamera(event, bounds);
+        }}
+        onPointerMove={(event) => {
+          if (dragBounds && event.currentTarget.hasPointerCapture(event.pointerId)) centerCamera(event, dragBounds);
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          setDragBounds(null);
+        }}
+        onPointerCancel={() => setDragBounds(null)}
+      >
+        <rect x="0" y="0" width={width} height={height} rx="8" className="minimap-background" />
+        {edges.map((edge) => {
+          const from = mapNode.get(edge.from);
+          const to = mapNode.get(edge.to);
+          if (!from || !to) return null;
+          const a = worldToMini(from.x + from.width / 2, from.y + from.height / 2);
+          const b = worldToMini(to.x + to.width / 2, to.y + to.height / 2);
+          return <line key={edge.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="minimap-edge" />;
+        })}
+        {nodes.map((node) => {
+          const point = worldToMini(node.x, node.y);
+          return <rect key={node.id} x={point.x} y={point.y} width={Math.max(2, node.width * scale)} height={Math.max(2, node.height * scale)} rx="1.5" className="minimap-node" />;
+        })}
+        <rect
+          x={miniView.x}
+          y={miniView.y}
+          width={viewWidth * scale}
+          height={viewHeight * scale}
+          className="minimap-viewport"
+        />
+      </svg>
+      <span className="minimap-label">Miniatura</span>
+    </div>
+  );
+}
+
 export default function DiagramCanvas({
   nodes,
   edges,
+  settings,
+  camera,
   selectedNodeId,
   connectMode,
   connectSourceId,
+  onCameraChange,
   onSelectNode,
   onMoveNode,
   onConnectNode,
   onClearSelection,
+  onAddGuide,
+  onMoveGuide,
 }: DiagramCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragSession | null>(null);
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
+  const pointerPointsRef = useRef(new Map<number, ScreenPoint>());
+  const pinchRef = useRef<PinchSession | null>(null);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
 
-  function pointInSvg(event: { clientX: number; clientY: number }) {
+  function pointInSvg(event: { clientX: number; clientY: number }): ScreenPoint {
     const svg = svgRef.current;
     const matrix = svg?.getScreenCTM();
     if (!svg || !matrix) return { x: 0, y: 0 };
@@ -132,16 +346,39 @@ export default function DiagramCanvas({
     return { x: transformed.x, y: transformed.y };
   }
 
-  function worldPoint(event: { clientX: number; clientY: number }) {
-    const point = pointInSvg(event);
+  function worldPoint(point: ScreenPoint): ScreenPoint {
     return { x: (point.x - camera.x) / camera.zoom, y: (point.y - camera.y) / camera.zoom };
+  }
+
+  function startPan(pointerId: number, point: ScreenPoint) {
+    dragRef.current = { type: "pan", pointerId, startX: point.x, startY: point.y, cameraX: camera.x, cameraY: camera.y };
   }
 
   function handleCanvasPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
     const target = event.target as Element;
+    const guideElement = target.closest("[data-guide-id]");
+    const guideId = guideElement?.getAttribute("data-guide-id");
+    if (guideId && event.button === 0) {
+      const guide = settings.guides.find((item) => item.id === guideId);
+      if (!guide) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      dragRef.current = { type: "guide", pointerId: event.pointerId, guideId, axis: guide.axis };
+      return;
+    }
+
+    const rulerElement = target.closest("[data-ruler-axis]");
+    const rulerAxis = rulerElement?.getAttribute("data-ruler-axis");
+    if (settings.showRulers && (rulerAxis === "vertical" || rulerAxis === "horizontal") && event.button === 0) {
+      const point = worldPoint(pointInSvg(event));
+      const axis = rulerAxis as GuideAxis;
+      const id = onAddGuide(axis, axis === "vertical" ? point.x : point.y);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      dragRef.current = { type: "guide", pointerId: event.pointerId, guideId: id, axis };
+      return;
+    }
+
     const nodeElement = target.closest("[data-node-id]");
     const nodeId = nodeElement?.getAttribute("data-node-id");
-
     if (nodeId) {
       if (connectMode) {
         onConnectNode(nodeId);
@@ -150,15 +387,9 @@ export default function DiagramCanvas({
       if (event.button !== 0) return;
       const node = nodeById.get(nodeId);
       if (!node) return;
-      const point = worldPoint(event);
+      const point = worldPoint(pointInSvg(event));
       event.currentTarget.setPointerCapture(event.pointerId);
-      dragRef.current = {
-        type: "node",
-        pointerId: event.pointerId,
-        nodeId,
-        offsetX: point.x - node.x,
-        offsetY: point.y - node.y,
-      };
+      dragRef.current = { type: "node", pointerId: event.pointerId, nodeId, offsetX: point.x - node.x, offsetY: point.y - node.y };
       onSelectNode(nodeId);
       return;
     }
@@ -166,14 +397,28 @@ export default function DiagramCanvas({
 
     const point = pointInSvg(event);
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = {
-      type: "pan",
-      pointerId: event.pointerId,
-      startX: point.x,
-      startY: point.y,
-      cameraX: camera.x,
-      cameraY: camera.y,
-    };
+    if (event.pointerType === "touch") {
+      pointerPointsRef.current.set(event.pointerId, point);
+      if (pointerPointsRef.current.size >= 2) {
+        const entries = [...pointerPointsRef.current.entries()].slice(0, 2);
+        const first = entries[0][1];
+        const second = entries[1][1];
+        const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+        const anchor = worldPoint(midpoint);
+        pinchRef.current = {
+          pointerIds: [entries[0][0], entries[1][0]],
+          startDistance: Math.max(1, distance(first, second)),
+          startZoom: camera.zoom,
+          worldX: anchor.x,
+          worldY: anchor.y,
+        };
+        dragRef.current = null;
+      } else {
+        startPan(event.pointerId, point);
+      }
+    } else {
+      startPan(event.pointerId, point);
+    }
     if (!connectMode) onClearSelection();
   }
 
@@ -187,45 +432,88 @@ export default function DiagramCanvas({
     else onSelectNode(nodeId);
   }
 
-  function handlePointerMove(event: ReactPointerEvent<SVGSVGElement>) {
-    const session = dragRef.current;
-    if (!session || session.pointerId !== event.pointerId) return;
-    const point = pointInSvg(event);
+  function snappedPosition(position: number, size: number, axis: GuideAxis): number {
+    let result = position;
+    if (settings.snapToGrid) result = Math.round(result / settings.gridSpacingPx) * settings.gridSpacingPx;
+    const threshold = 8 / camera.zoom;
+    let nearestOffset = 0;
+    let nearestDistance = threshold;
+    for (const guide of settings.guides) {
+      if (guide.axis !== axis) continue;
+      for (const anchorOffset of [0, size / 2, size]) {
+        const delta = guide.position - (result + anchorOffset);
+        if (Math.abs(delta) < nearestDistance) {
+          nearestDistance = Math.abs(delta);
+          nearestOffset = delta;
+        }
+      }
+    }
+    return result + nearestOffset;
+  }
 
-    if (session.type === "pan") {
-      setCamera((current) => ({
-        ...current,
-        x: session.cameraX + point.x - session.startX,
-        y: session.cameraY + point.y - session.startY,
-      }));
-      return;
+  function handlePointerMove(event: ReactPointerEvent<SVGSVGElement>) {
+    const point = pointInSvg(event);
+    if (event.pointerType === "touch" && pointerPointsRef.current.has(event.pointerId)) {
+      pointerPointsRef.current.set(event.pointerId, point);
+      const pinch = pinchRef.current;
+      if (pinch) {
+        const first = pointerPointsRef.current.get(pinch.pointerIds[0]);
+        const second = pointerPointsRef.current.get(pinch.pointerIds[1]);
+        if (first && second) {
+          const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+          const zoom = clampZoom(pinch.startZoom * distance(first, second) / pinch.startDistance);
+          onCameraChange({ x: midpoint.x - pinch.worldX * zoom, y: midpoint.y - pinch.worldY * zoom, zoom });
+          return;
+        }
+      }
     }
 
-    const worldX = (point.x - camera.x) / camera.zoom;
-    const worldY = (point.y - camera.y) / camera.zoom;
-    onMoveNode(session.nodeId, worldX - session.offsetX, worldY - session.offsetY);
+    const session = dragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (session.type === "pan") {
+      onCameraChange({ ...camera, x: session.cameraX + point.x - session.startX, y: session.cameraY + point.y - session.startY });
+      return;
+    }
+    const world = worldPoint(point);
+    if (session.type === "guide") {
+      onMoveGuide(session.guideId, session.axis === "vertical" ? world.x : world.y);
+      return;
+    }
+    const node = nodeById.get(session.nodeId);
+    const x = world.x - session.offsetX;
+    const y = world.y - session.offsetY;
+    onMoveNode(session.nodeId, snappedPosition(x, node?.width ?? 0, "vertical"), snappedPosition(y, node?.height ?? 0, "horizontal"));
   }
 
   function handlePointerUp(event: ReactPointerEvent<SVGSVGElement>) {
-    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+    const wasPinch = pinchRef.current?.pointerIds.includes(event.pointerId) ?? false;
+    if (event.pointerType === "touch") pointerPointsRef.current.delete(event.pointerId);
+    if (wasPinch) {
+      pinchRef.current = null;
+      dragRef.current = null;
+      const remaining = [...pointerPointsRef.current.entries()][0];
+      if (remaining) startPan(remaining[0], remaining[1]);
+    } else if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+    }
   }
 
   function handleWheel(event: ReactWheelEvent<SVGSVGElement>) {
     event.preventDefault();
     const point = pointInSvg(event);
-    const nextZoom = Math.max(0.4, Math.min(2.4, camera.zoom * Math.exp(-event.deltaY * 0.001)));
+    const nextZoom = clampZoom(camera.zoom * Math.exp(-event.deltaY * 0.001));
     const worldX = (point.x - camera.x) / camera.zoom;
     const worldY = (point.y - camera.y) / camera.zoom;
-    setCamera({ x: point.x - worldX * nextZoom, y: point.y - worldY * nextZoom, zoom: nextZoom });
+    onCameraChange({ x: point.x - worldX * nextZoom, y: point.y - worldY * nextZoom, zoom: nextZoom });
   }
 
   function updateZoom(zoom: number) {
-    const nextZoom = Math.max(0.4, Math.min(2.4, zoom));
-    const centerX = WIDTH / 2;
-    const centerY = HEIGHT / 2;
+    const nextZoom = clampZoom(zoom);
+    const centerX = CANVAS_WIDTH / 2;
+    const centerY = CANVAS_HEIGHT / 2;
     const worldX = (centerX - camera.x) / camera.zoom;
     const worldY = (centerY - camera.y) / camera.zoom;
-    setCamera({ x: centerX - worldX * nextZoom, y: centerY - worldY * nextZoom, zoom: nextZoom });
+    onCameraChange({ x: centerX - worldX * nextZoom, y: centerY - worldY * nextZoom, zoom: nextZoom });
   }
 
   return (
@@ -233,9 +521,9 @@ export default function DiagramCanvas({
       <svg
         ref={svgRef}
         className={`diagram-canvas${connectMode ? " is-connecting" : ""}`}
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
         role="application"
-        aria-label="Płótno diagramu. Przeciągaj elementy, aby zmienić ich położenie."
+        aria-label="Nieograniczone płótno diagramu. Przeciągaj tło, aby przesuwać widok; użyj kółka myszy albo gestu dwoma palcami, aby zmieniać powiększenie."
         onPointerDown={handleCanvasPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -244,48 +532,29 @@ export default function DiagramCanvas({
         onKeyDown={handleKeyDown}
       >
         <defs>
-          <pattern
-            id="grid"
-            width="24"
-            height="24"
-            patternUnits="userSpaceOnUse"
-            patternTransform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}
-          >
-            <circle cx="1" cy="1" r="1" fill="#dedde9" />
-          </pattern>
+          <GridPattern settings={settings} camera={camera} />
           <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#aaa6c4" />
           </marker>
         </defs>
-        <rect width={WIDTH} height={HEIGHT} fill="#fbfbfe" data-canvas-background="true" />
-        <rect width={WIDTH} height={HEIGHT} fill="url(#grid)" data-canvas-background="true" />
+        <rect width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="#fbfbfe" data-canvas-background="true" />
+        <rect width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="url(#grid-pattern)" data-canvas-background="true" />
         <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}>
           {edges.map((edge) => {
             const from = nodeById.get(edge.from);
             const to = nodeById.get(edge.to);
-            if (!from || !to) return null;
-            return <DiagramEdgeView key={edge.id} from={from} to={to} />;
+            return from && to ? <DiagramEdgeView key={edge.id} from={from} to={to} /> : null;
           })}
-          {nodes.map((node) => {
-            return (
-              <DiagramNodeView
-                key={node.id}
-                node={node}
-                selected={selectedNodeId === node.id}
-                connectSource={node.id === connectSourceId}
-              />
-            );
-          })}
+          {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeId === node.id} connectSource={node.id === connectSourceId} />)}
         </g>
+        <GuideOverlays guides={settings.guides} camera={camera} />
+        {settings.showRulers && <Rulers camera={camera} unit={settings.unit} />}
       </svg>
+      {settings.showMinimap && <MiniMap nodes={nodes} edges={edges} camera={camera} onCameraChange={onCameraChange} />}
       <div className="canvas-zoom" aria-label="Sterowanie powiększeniem">
-        <button type="button" aria-label="Pomniejsz" onClick={() => updateZoom(camera.zoom - 0.1)}>
-          −
-        </button>
+        <button type="button" aria-label="Pomniejsz" onClick={() => updateZoom(camera.zoom - 0.1)}>−</button>
         <span>{Math.round(camera.zoom * 100)}%</span>
-        <button type="button" aria-label="Powiększ" onClick={() => updateZoom(camera.zoom + 0.1)}>
-          +
-        </button>
+        <button type="button" aria-label="Powiększ" onClick={() => updateZoom(camera.zoom + 0.1)}>+</button>
       </div>
     </div>
   );

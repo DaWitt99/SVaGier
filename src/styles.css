@@ -364,6 +364,336 @@ select:focus-visible {
   box-shadow: 0 4px 18px #36344d08;
 }
 
+.canvas-settings-panel {
+  position: absolute;
+  top: 32px;
+  right: 32px;
+  z-index: 4;
+  display: flex;
+  width: min(300px, calc(100% - 64px));
+  max-height: calc(100% - 64px);
+  flex-direction: column;
+  gap: 15px;
+  overflow: auto;
+  padding: 17px;
+  border: 1px solid #e8e7ef;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 12px 34px #302e4520;
+}
+
+.canvas-settings-heading,
+.settings-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.canvas-settings-heading h2 {
+  margin: 4px 0 0;
+  color: #3a394d;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 13px;
+  border-top: 1px solid #efeff4;
+}
+
+.settings-section h3 {
+  margin: 0;
+  color: #55546a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-fields-row {
+  display: grid;
+  grid-template-columns: 1fr 78px;
+  gap: 8px;
+}
+
+.settings-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  color: #77768b;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.settings-field input,
+.settings-field select,
+.settings-view-input input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #e8e7ef;
+  border-radius: 7px;
+  background: #fff;
+  color: #39384c;
+  font-size: 11px;
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #656479;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.settings-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--purple);
+}
+
+.settings-section-heading .settings-fit-button,
+.settings-inline-actions button,
+.settings-view-input button,
+.settings-item-list > li > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #818095;
+  cursor: pointer;
+}
+
+.settings-fit-button {
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 7px;
+  color: var(--purple-dark) !important;
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.settings-fit-button:hover,
+.settings-inline-actions button:hover,
+.settings-view-input button:hover,
+.settings-item-list > li > button:hover {
+  background: #f5f4fa;
+}
+
+.settings-inline-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.settings-inline-actions button,
+.settings-view-input button,
+.settings-item-list > li > button {
+  width: 27px;
+  height: 27px;
+}
+
+.settings-hint,
+.settings-empty {
+  margin: -3px 0 0;
+  color: #9998a9;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.settings-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-item-list > li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  color: #69687d;
+  font-size: 10px;
+}
+
+.settings-item-list > li > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.settings-item-list > li > span svg {
+  flex: 0 0 auto;
+  color: #8d7be8;
+}
+
+.saved-view-list > li {
+  min-height: 30px;
+}
+
+.saved-view-restore {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #69687d;
+  cursor: pointer;
+  text-align: left;
+}
+
+.saved-view-restore:hover {
+  background: #f5f4fa;
+  color: var(--purple-dark);
+}
+
+.saved-view-restore span {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-view-restore small {
+  color: #9998a9;
+  font-size: 9px;
+}
+
+.settings-view-input {
+  display: flex;
+  gap: 5px;
+}
+
+.settings-view-input button {
+  border: 1px solid #e8e7ef;
+}
+
+.canvas-rulers {
+  user-select: none;
+}
+
+.ruler-surface {
+  fill: #f7f7fb;
+  stroke: #e1e0ea;
+  stroke-width: 0.7;
+  cursor: crosshair;
+}
+
+.ruler-corner {
+  fill: #efeff5;
+  stroke: #e1e0ea;
+  stroke-width: 0.7;
+}
+
+.ruler-tick {
+  stroke: #aaa8b9;
+  stroke-width: 0.7;
+  pointer-events: none;
+}
+
+.ruler-label {
+  fill: #88879a;
+  font-size: 8px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ruler-hit-area {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.canvas-guide {
+  cursor: move;
+}
+
+.guide-hit-area {
+  stroke: transparent;
+  stroke-width: 12;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+}
+
+.guide-line {
+  stroke: #32a8c5;
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.minimap-wrap {
+  position: absolute;
+  right: 14px;
+  bottom: 60px;
+  z-index: 2;
+  width: 190px;
+  overflow: hidden;
+  border: 1px solid #e5e4ed;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 3px 12px #302e4512;
+  touch-action: none;
+}
+
+.canvas-minimap {
+  display: block;
+  width: 100%;
+  height: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.minimap-background {
+  fill: #fbfbfe;
+}
+
+.minimap-edge {
+  stroke: #c6c3d9;
+  stroke-width: 0.8;
+}
+
+.minimap-node {
+  fill: #c9c1f5;
+  stroke: #9588dd;
+  stroke-width: 0.7;
+}
+
+.minimap-viewport {
+  fill: #7965e822;
+  stroke: #715cdb;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.minimap-label {
+  display: block;
+  height: 20px;
+  padding: 2px 7px 4px;
+  border-top: 1px solid #eeeeF4;
+  color: #9291a2;
+  font-size: 9px;
+}
+
 .diagram-canvas {
   display: block;
   width: 100%;
@@ -786,5 +1116,25 @@ kbd {
 
   .mode-hint {
     display: none;
+  }
+
+  .toolbar-actions {
+    gap: 2px;
+  }
+
+  .toolbar-actions .toolbar-button {
+    width: 34px;
+    padding: 0;
+  }
+
+  .toolbar-actions .toolbar-button span {
+    display: none;
+  }
+
+  .canvas-settings-panel {
+    top: 20px;
+    right: 20px;
+    width: min(290px, calc(100% - 40px));
+    max-height: calc(100% - 40px);
   }
 }

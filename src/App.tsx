@@ -2,16 +2,20 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownToLine,
   Check,
+  Maximize,
   MousePointer2,
   Plus,
   Shapes,
   Sparkles,
   Spline,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import DiagramCanvas from "./components/DiagramCanvas";
+import CanvasSettingsPanel from "./components/CanvasSettingsPanel";
 import { downloadSvg } from "./exportSvg";
-import { initialDocument, type DiagramDocument, type DiagramNode, type ShapeKind } from "./model";
+import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./components/DiagramCanvas";
+import { defaultEditorSettings, initialDocument, type Camera, type DiagramDocument, type DiagramNode, type EditorSettings, type GuideAxis, type ShapeKind } from "./model";
 
 const STORAGE_KEY = "svagier.document.v1";
 
@@ -21,7 +25,15 @@ function loadDocument(): DiagramDocument {
     if (!stored) return initialDocument;
     const parsed = JSON.parse(stored) as Partial<DiagramDocument>;
     if (typeof parsed.title === "string" && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
-      return parsed as DiagramDocument;
+      const editor = { ...defaultEditorSettings, ...(parsed.editor ?? {}) } as EditorSettings;
+      return {
+        ...parsed,
+        editor: {
+          ...editor,
+          guides: Array.isArray(editor.guides) ? editor.guides : [],
+          savedViews: Array.isArray(editor.savedViews) ? editor.savedViews : [],
+        },
+      } as DiagramDocument;
     }
   } catch {
     return initialDocument;
@@ -34,6 +46,8 @@ function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>("idea");
   const [connectMode, setConnectMode] = useState(false);
   const [connectSourceId, setConnectSourceId] = useState<string | null>(null);
+  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
+  const [showCanvasSettings, setShowCanvasSettings] = useState(false);
   const [saved, setSaved] = useState(true);
   const selectedNode = useMemo(
     () => document.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -54,6 +68,68 @@ function App() {
       ...current,
       nodes: current.nodes.map((node) => (node.id === id ? { ...node, ...updates } : node)),
     }));
+  }
+
+  function updateEditorSettings(updates: Partial<EditorSettings>) {
+    setDocument((current) => ({ ...current, editor: { ...current.editor, ...updates } }));
+  }
+
+  function addGuide(axis: GuideAxis, position: number): string {
+    const id = `guide-${crypto.randomUUID()}`;
+    setDocument((current) => ({
+      ...current,
+      editor: { ...current.editor, guides: [...current.editor.guides, { id, axis, position }] },
+    }));
+    return id;
+  }
+
+  function moveGuide(id: string, position: number) {
+    setDocument((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        guides: current.editor.guides.map((guide) => guide.id === id ? { ...guide, position } : guide),
+      },
+    }));
+  }
+
+  function fitDiagram() {
+    if (document.nodes.length === 0) {
+      setCamera({ x: 0, y: 0, zoom: 1 });
+      return;
+    }
+    const left = Math.min(...document.nodes.map((node) => node.x));
+    const top = Math.min(...document.nodes.map((node) => node.y));
+    const right = Math.max(...document.nodes.map((node) => node.x + node.width));
+    const bottom = Math.max(...document.nodes.map((node) => node.y + node.height));
+    const contentWidth = Math.max(1, right - left);
+    const contentHeight = Math.max(1, bottom - top);
+    const padding = 110;
+    const zoom = Math.max(0.06, Math.min(4, (CANVAS_WIDTH - padding * 2) / contentWidth, (CANVAS_HEIGHT - padding * 2) / contentHeight));
+    setCamera({
+      x: CANVAS_WIDTH / 2 - (left + contentWidth / 2) * zoom,
+      y: CANVAS_HEIGHT / 2 - (top + contentHeight / 2) * zoom,
+      zoom,
+    });
+  }
+
+  function saveView(name: string) {
+    const cleanName = name.trim() || `Widok ${document.editor.savedViews.length + 1}`;
+    setDocument((current) => ({
+      ...current,
+      editor: {
+        ...current.editor,
+        savedViews: [...current.editor.savedViews, { id: `view-${crypto.randomUUID()}`, name: cleanName, camera }],
+      },
+    }));
+  }
+
+  function removeGuide(id: string) {
+    updateEditorSettings({ guides: document.editor.guides.filter((guide) => guide.id !== id) });
+  }
+
+  function removeSavedView(id: string) {
+    updateEditorSettings({ savedViews: document.editor.savedViews.filter((view) => view.id !== id) });
   }
 
   function addNode() {
@@ -176,13 +252,15 @@ function App() {
               {connectMode && <span className="mode-hint">{connectSourceId ? "Wybierz drugi element" : "Wybierz pierwszy element"}</span>}
             </div>
             <div className="toolbar-actions">
-              <button className="toolbar-button" type="button" onClick={addNode}>
+              <button className="toolbar-button" type="button" aria-label="Dodaj element" title="Dodaj element" onClick={addNode}>
                 <Plus size={16} />
                 <span>Element</span>
               </button>
               <button
                 className={`toolbar-button${connectMode ? " selected" : ""}`}
                 type="button"
+                aria-label="Połącz elementy"
+                title="Połącz elementy"
                 onClick={() => {
                   setConnectMode((current) => !current);
                   setConnectSourceId(null);
@@ -191,6 +269,21 @@ function App() {
                 <Spline size={16} />
                 <span>Połączenie</span>
               </button>
+              <button className="toolbar-button" type="button" aria-label="Dopasuj cały diagram do widoku" onClick={fitDiagram} title="Dopasuj cały diagram do widoku">
+                <Maximize size={15} />
+                <span>Dopasuj</span>
+              </button>
+              <button
+                className={`toolbar-button${showCanvasSettings ? " selected" : ""}`}
+                type="button"
+                aria-label="Ustawienia widoku"
+                title="Ustawienia widoku"
+                aria-expanded={showCanvasSettings}
+                onClick={() => setShowCanvasSettings((current) => !current)}
+              >
+                <SlidersHorizontal size={15} />
+                <span>Widok</span>
+              </button>
             </div>
           </div>
 
@@ -198,14 +291,33 @@ function App() {
             <DiagramCanvas
               nodes={document.nodes}
               edges={document.edges}
+              settings={document.editor}
+              camera={camera}
               selectedNodeId={selectedNodeId}
               connectMode={connectMode}
               connectSourceId={connectSourceId}
+              onCameraChange={setCamera}
               onSelectNode={setSelectedNodeId}
               onMoveNode={(id, x, y) => updateNode(id, { x, y })}
               onConnectNode={handleConnectNode}
               onClearSelection={() => setSelectedNodeId(null)}
+              onAddGuide={addGuide}
+              onMoveGuide={moveGuide}
             />
+            {showCanvasSettings && (
+              <CanvasSettingsPanel
+                settings={document.editor}
+                camera={camera}
+                onChange={updateEditorSettings}
+                onClose={() => setShowCanvasSettings(false)}
+                onFit={fitDiagram}
+                onAddGuide={(axis) => addGuide(axis, axis === "vertical" ? (CANVAS_WIDTH / 2 - camera.x) / camera.zoom : (CANVAS_HEIGHT / 2 - camera.y) / camera.zoom)}
+                onRemoveGuide={removeGuide}
+                onSaveView={saveView}
+                onRestoreView={setCamera}
+                onRemoveView={removeSavedView}
+              />
+            )}
             <div className="canvas-status">
               <span>{document.nodes.length} elementów</span>
               <span className="status-dot" />

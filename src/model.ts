@@ -17,14 +17,60 @@ export interface DiagramEdge {
   to: string;
 }
 
+export type GridStyle = "dots" | "lines" | "isometric";
+export type MeasurementUnit = "px" | "mm" | "cm" | "in";
+export type GuideAxis = "vertical" | "horizontal";
+
+export interface Guide {
+  id: string;
+  axis: GuideAxis;
+  position: number;
+}
+
+export interface Camera {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface SavedView {
+  id: string;
+  name: string;
+  camera: Camera;
+}
+
+export interface EditorSettings {
+  gridStyle: GridStyle;
+  gridSpacingPx: number;
+  snapToGrid: boolean;
+  showRulers: boolean;
+  unit: MeasurementUnit;
+  showMinimap: boolean;
+  guides: Guide[];
+  savedViews: SavedView[];
+}
+
 export interface DiagramDocument {
   title: string;
   nodes: DiagramNode[];
   edges: DiagramEdge[];
+  editor: EditorSettings;
 }
+
+export const defaultEditorSettings: EditorSettings = {
+  gridStyle: "dots",
+  gridSpacingPx: 24,
+  snapToGrid: false,
+  showRulers: true,
+  unit: "px",
+  showMinimap: true,
+  guides: [],
+  savedViews: [],
+};
 
 export const initialDocument: DiagramDocument = {
   title: "Mapa produktu",
+  editor: defaultEditorSettings,
   nodes: [
     {
       id: "idea",
