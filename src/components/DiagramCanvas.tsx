@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
-import { CornerDownRight, GitBranch, GitBranchPlus, Link2, Lock, Palette, Ruler, Tags, Trash2, Type, Unlock, Spline, X } from "lucide-react";
+import { BookOpen, CornerDownRight, GitBranch, GitBranchPlus, Link2, Lock, Palette, Ruler, Tags, Trash2, Type, Unlock, Spline, X } from "lucide-react";
 import type { Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, InspectorSection, MeasurementUnit } from "../model";
 import { formatMeasurement } from "../units";
 import { shapeDefinition } from "../shapeLibrary";
@@ -13,7 +13,7 @@ interface DiagramCanvasProps {
   camera: Camera;
   selectedNodeIds: string[];
   nodesWithChildren: Set<string>;
-  toolMode: "select" | "pan" | "freehand";
+  toolMode: "select" | "freehand";
   connectMode: boolean;
   connectSourceId: string | null;
   selectedEdgeId: string | null;
@@ -29,6 +29,7 @@ interface DiagramCanvasProps {
   onCameraChange: (camera: Camera) => void;
   onSetSelection: (ids: string[]) => void;
   onMoveNodes: (updates: Partial<DiagramNode>[]) => void;
+  onMoveAsChild: (nodeId: string, parentId: string) => void;
   onBeginHistoryAction: () => void;
   onEndHistoryAction: () => void;
   onConnectNode: (id: string) => void;
@@ -58,7 +59,7 @@ interface CanvasViewport {
 
 type DragSession =
   | { type: "pan"; pointerId: number; startX: number; startY: number; cameraX: number; cameraY: number }
-  | { type: "nodes"; pointerId: number; start: ScreenPoint; nodes: DiagramNode[] }
+  | { type: "nodes"; pointerId: number; start: ScreenPoint; nodes: DiagramNode[]; sourceId: string; clickSelection?: string[]; didMove: boolean }
   | { type: "guide"; pointerId: number; guideId: string; axis: GuideAxis }
   | { type: "marquee"; pointerId: number; start: ScreenPoint; current: ScreenPoint; additive: boolean; baseSelection: string[] }
   | { type: "resize"; pointerId: number; start: ScreenPoint; handle: string; nodes: DiagramNode[]; bounds: WorldBounds }
@@ -440,6 +441,7 @@ function ObjectContextToolbar({
     { section: "size", label: "Wymiary i obrót", icon: Ruler },
     { section: "details", label: "Etykiety i notatki", icon: Tags },
     { section: "link", label: "Odnośniki", icon: Link2 },
+    { section: "flashcards", label: "Fiszki elementu", icon: BookOpen },
   ];
   const edgeOptions: { section: InspectorSection; label: string; icon: typeof Type }[] = [
     { section: "content", label: "Etykieta połączenia", icon: Type },
@@ -657,6 +659,7 @@ export default function DiagramCanvas({
   onCameraChange,
   onSetSelection,
   onMoveNodes,
+  onMoveAsChild,
   onBeginHistoryAction,
   onEndHistoryAction,
   onConnectNode,
@@ -801,6 +804,7 @@ export default function DiagramCanvas({
     const groupedIds = expandGroup(node);
     const toggle = event.ctrlKey || event.metaKey;
     const additive = event.shiftKey;
+    const hierarchyModifierHeld = event.shiftKey || event.ctrlKey;
     const alreadySelected = groupedIds.every((id) => selectedNodeIds.includes(id));
     const togglingOff = toggle && alreadySelected;
     let nextSelection: string[];
@@ -813,15 +817,36 @@ export default function DiagramCanvas({
     } else {
       nextSelection = groupedIds;
     }
-    onSetSelection(nextSelection);
-    if (togglingOff) return;
+    onSetSelection(hierarchyModifierHeld ? groupedIds : nextSelection);
+    if (togglingOff && !hierarchyModifierHeld) return;
 
-    const movable = nodes.filter((item) => nextSelection.includes(item.id) && !item.locked);
-    if (movable.length === 0 || event.button !== 0) return;
+    const dragSelection = hierarchyModifierHeld ? groupedIds : nextSelection;
+    const movable = nodes.filter((item) => dragSelection.includes(item.id) && !item.locked);
+    if (event.button !== 0) return;
+    if (movable.length === 0) {
+      if (hierarchyModifierHeld) onSetSelection(nextSelection);
+      return;
+    }
     const start = pointInSvg(event);
     event.currentTarget.setPointerCapture(event.pointerId);
     onBeginHistoryAction();
-    dragRef.current = { type: "nodes", pointerId: event.pointerId, start, nodes: movable.map((item) => ({ ...item })) };
+    dragRef.current = {
+      type: "nodes",
+      pointerId: event.pointerId,
+      start,
+      nodes: movable.map((item) => ({ ...item })),
+      sourceId: node.id,
+      ...(hierarchyModifierHeld ? { clickSelection: nextSelection } : {}),
+      didMove: false,
+    };
+  }
+
+  function nodeIdAtScreenPoint(clientX: number, clientY: number, excludedId: string): string | null {
+    for (const element of document.elementsFromPoint(clientX, clientY)) {
+      const nodeId = element.closest("[data-node-id]")?.getAttribute("data-node-id");
+      if (nodeId && nodeId !== excludedId) return nodeId;
+    }
+    return null;
   }
 
   function beginFreehand(event: ReactPointerEvent<SVGSVGElement>, point: ScreenPoint) {
@@ -858,15 +883,10 @@ export default function DiagramCanvas({
       beginTouchGesture(event, pointInSvg(event), false);
       return;
     }
-    if (event.pointerType !== "touch" && (event.button === 1 || toolMode === "pan") && !isGuideTarget && !isRulerTarget) {
+    if (event.pointerType !== "touch" && event.button === 1 && !isGuideTarget && !isRulerTarget) {
       const point = pointInSvg(event);
       event.currentTarget.setPointerCapture(event.pointerId);
       startPan(event.pointerId, point);
-      onClearSelection();
-      return;
-    }
-    if (event.pointerType === "touch" && toolMode === "pan" && !isGuideTarget && !isRulerTarget) {
-      beginTouchGesture(event, pointInSvg(event), false);
       onClearSelection();
       return;
     }
@@ -962,10 +982,11 @@ export default function DiagramCanvas({
     const point = pointInSvg(event);
     onSelectEdge(null);
     if (event.pointerType === "touch") {
-      beginTouchGesture(event, point, true);
+      beginTouchGesture(event, point, false);
+      onClearSelection();
     } else {
       event.currentTarget.setPointerCapture(event.pointerId);
-      if (event.button === 1 || toolMode === "pan") {
+      if (event.button === 1) {
         startPan(event.pointerId, point);
       } else {
         const additive = event.shiftKey || event.ctrlKey || event.metaKey;
@@ -973,7 +994,6 @@ export default function DiagramCanvas({
         setMarquee({ start: point, current: point });
       }
     }
-    if (!connectMode && toolMode === "pan") onClearSelection();
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<SVGSVGElement>) {
@@ -1092,6 +1112,9 @@ export default function DiagramCanvas({
       return;
     }
     if (session.type === "nodes") {
+      if (!session.didMove && Math.hypot(point.x - session.start.x, point.y - session.start.y) >= 4) {
+        dragRef.current = { ...session, didMove: true };
+      }
       const startWorld = worldPoint(session.start);
       const delta = snapGroupDelta(session.nodes, world.x - startWorld.x, world.y - startWorld.y);
       onMoveNodes(session.nodes.map((node) => ({ id: node.id, x: node.x + delta.x, y: node.y + delta.y })));
@@ -1138,6 +1161,45 @@ export default function DiagramCanvas({
     }
     const session = dragRef.current;
     if (!session || session.pointerId !== event.pointerId) return;
+    if (session.type === "nodes") {
+      const end = pointInSvg(event);
+      const didMove = session.didMove || Math.hypot(end.x - session.start.x, end.y - session.start.y) >= 4;
+      if (session.clickSelection && !didMove) {
+        onSetSelection(session.clickSelection);
+      } else if (didMove && session.nodes.length === 1 && session.nodes[0].id === session.sourceId) {
+        const relation = event.shiftKey ? "child" : event.ctrlKey ? "parent" : null;
+        const targetId = relation ? nodeIdAtScreenPoint(event.clientX, event.clientY, session.sourceId) : null;
+        const source = allNodes.find((node) => node.id === session.sourceId);
+        const target = targetId ? allNodes.find((node) => node.id === targetId) : undefined;
+        if (relation && source && target) {
+          const child = relation === "child" ? source : target;
+          const parent = relation === "child" ? target : source;
+          let canReparent = !child.locked && !parent.locked && child.parentId !== parent.id;
+          let ancestorId: string | undefined = parent.id;
+          const seen = new Set<string>();
+          while (canReparent && ancestorId && !seen.has(ancestorId)) {
+            if (ancestorId === child.id) {
+              canReparent = false;
+              break;
+            }
+            seen.add(ancestorId);
+            ancestorId = allNodes.find((node) => node.id === ancestorId)?.parentId;
+          }
+          if (canReparent) {
+            onMoveAsChild(child.id, parent.id);
+            onSetSelection([source.id]);
+            onSelectEdge(null);
+          } else {
+            onMoveNodes(session.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y })));
+          }
+        } else if (relation) {
+          onMoveNodes(session.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y })));
+        }
+      }
+      onEndHistoryAction();
+      dragRef.current = null;
+      return;
+    }
     if (session.type === "connect") {
       const hit = document.elementFromPoint(event.clientX, event.clientY);
       const targetNodeId = hit?.closest("[data-node-id]")?.getAttribute("data-node-id");
@@ -1173,7 +1235,7 @@ export default function DiagramCanvas({
       const hits = nodes.filter((node) => hitIds.includes(node.id) || (node.groupId && hitGroups.has(node.groupId))).map((node) => node.id);
       onSetSelection(session.additive ? [...new Set([...session.baseSelection, ...hits])] : hits);
       setMarquee(null);
-    } else if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide" || session.type === "path-handle") {
+    } else if (session.type === "resize" || session.type === "rotate" || session.type === "guide" || session.type === "path-handle") {
       onEndHistoryAction();
     }
     dragRef.current = null;
@@ -1191,6 +1253,7 @@ export default function DiagramCanvas({
     }
     const session = dragRef.current;
     if (!session || session.pointerId !== event.pointerId) return;
+    if (session.type === "nodes" && session.clickSelection) onSetSelection(session.clickSelection);
     if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide" || session.type === "path-handle") onEndHistoryAction();
     setMarquee(null);
     setConnectionPreview(null);
@@ -1220,11 +1283,11 @@ export default function DiagramCanvas({
     <div className="canvas-frame">
       <svg
         ref={svgRef}
-        className={`diagram-canvas${connectMode ? " is-connecting" : ""}${toolMode === "select" ? " is-select-tool" : toolMode === "pan" ? " is-pan-tool" : " is-freehand-tool"}`}
+        className={`diagram-canvas${connectMode ? " is-connecting" : ""}${toolMode === "select" ? " is-select-tool" : " is-freehand-tool"}`}
         viewBox={`${viewport.originX} ${viewport.originY} ${viewport.width} ${viewport.height}`}
         tabIndex={0}
         role="application"
-        aria-label="Płótno diagramu. W trybie zaznaczania przeciągnij tło, aby zaznaczyć obszar. Narzędzie ręki przesuwa widok, pióro rysuje krzywe, a kółko myszy lub gest dwoma palcami zmienia powiększenie."
+        aria-label="Płótno diagramu. Przeciągnij puste tło dotykiem, aby przesunąć widok; myszą przeciągnij tło, aby zaznaczyć obszar, a środkowym przyciskiem, aby przesunąć widok. Przy przeciąganiu węzła na drugi węzeł przytrzymaj Shift, aby ustawić go jako dziecko, lub Ctrl, aby ustawić go jako rodzica."
         onPointerDown={handleCanvasPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

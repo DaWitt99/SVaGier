@@ -1,5 +1,6 @@
-import { Link2, Sparkles, Spline, Tag, Trash2, Type, X } from "lucide-react";
-import type { DiagramEdge, DiagramNode, InspectorSection, ShapeKind } from "../model";
+import { useEffect, useState } from "react";
+import { BookOpen, Link2, PencilLine, Plus, Sparkles, Spline, Tag, Trash2, Type, X } from "lucide-react";
+import type { DiagramEdge, DiagramNode, Flashcard, InspectorSection, ShapeKind } from "../model";
 import { shapeLibrary } from "../shapeLibrary";
 
 interface InspectorPanelProps {
@@ -20,7 +21,84 @@ const sectionTitles: Record<InspectorSection, string> = {
   size: "Wymiary i obrót",
   details: "Notatki i etykiety",
   link: "Odnośniki",
+  flashcards: "Fiszki",
 };
+
+function FlashcardsEditor({ node, disabled, onUpdateNode }: { node: DiagramNode; disabled: boolean; onUpdateNode: (id: string, updates: Partial<DiagramNode>) => void }) {
+  const [front, setFront] = useState("");
+  const [back, setBack] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const cards = node.flashcards ?? [];
+
+  useEffect(() => {
+    setFront("");
+    setBack("");
+    setEditingId(null);
+  }, [node.id]);
+
+  function saveCard() {
+    const normalizedFront = front.trim();
+    const normalizedBack = back.trim();
+    if (!normalizedFront || !normalizedBack) return;
+    const next: Flashcard[] = editingId
+      ? cards.map((card) => card.id === editingId ? { ...card, front: normalizedFront, back: normalizedBack } : card)
+      : [...cards, { id: `flashcard-${crypto.randomUUID()}`, front: normalizedFront, back: normalizedBack }];
+    onUpdateNode(node.id, { flashcards: next });
+    setFront("");
+    setBack("");
+    setEditingId(null);
+  }
+
+  function editCard(card: Flashcard) {
+    setEditingId(card.id);
+    setFront(card.front);
+    setBack(card.back);
+  }
+
+  function removeCard(cardId: string) {
+    onUpdateNode(node.id, { flashcards: cards.filter((card) => card.id !== cardId) });
+    if (editingId === cardId) {
+      setEditingId(null);
+      setFront("");
+      setBack("");
+    }
+  }
+
+  return <>
+    <div className="flashcard-form">
+      <h3>{editingId ? "Edytuj fiszkę" : "Dodaj fiszkę"}</h3>
+      <div className="field-group">
+        <label htmlFor="flashcard-front">Przód · pytanie</label>
+        <textarea id="flashcard-front" rows={3} value={front} disabled={disabled} maxLength={1200} placeholder="Wpisz pytanie lub pojęcie…" onChange={(event) => setFront(event.target.value)} />
+      </div>
+      <div className="field-group">
+        <label htmlFor="flashcard-back">Tył · odpowiedź</label>
+        <textarea id="flashcard-back" rows={3} value={back} disabled={disabled} maxLength={2400} placeholder="Wpisz odpowiedź lub wyjaśnienie…" onChange={(event) => setBack(event.target.value)} />
+      </div>
+      <div className="flashcard-form-actions">
+        {editingId && <button type="button" className="flashcard-cancel" onClick={() => { setEditingId(null); setFront(""); setBack(""); }}>Anuluj</button>}
+        <button type="button" className="flashcard-save" disabled={disabled || !front.trim() || !back.trim()} onClick={saveCard}>
+          <Plus size={14} /> {editingId ? "Zapisz fiszkę" : "Dodaj fiszkę"}
+        </button>
+      </div>
+    </div>
+    <div className="flashcard-node-cards">
+      <div className="flashcard-node-cards-heading"><h3>Fiszki elementu</h3><span>{cards.length}</span></div>
+      {cards.length === 0 ? <p className="flashcard-empty-hint">Dodaj fiszkę, aby powiązać pytanie z tym elementem.</p> : cards.map((card) => (
+        <article className="flashcard-node-card" key={card.id}>
+          <div className="flashcard-node-card-text">
+            <strong>{card.front}</strong>
+            <p>{card.back}</p>
+          </div>
+          <div className="flashcard-node-card-actions">
+            <button type="button" aria-label="Edytuj fiszkę" title="Edytuj fiszkę" disabled={disabled} onClick={() => editCard(card)}><PencilLine size={13} /></button>
+            <button type="button" aria-label="Usuń fiszkę" title="Usuń fiszkę" disabled={disabled} onClick={() => removeCard(card.id)}><Trash2 size={13} /></button>
+          </div>
+        </article>
+      ))}
+    </div>
+  </>;
+}
 
 export default function InspectorPanel({
   section,
@@ -121,6 +199,11 @@ export default function InspectorPanel({
             {node.kind === "image" && <div className="field-group"><label htmlFor="image-source">Adres obrazu</label><input id="image-source" value={node.imageSrc ?? ""} placeholder="https://…" disabled={disabled} onChange={(event) => onUpdateNode(node.id, { imageSrc: event.target.value, imageData: undefined })} /></div>}
             <div className="field-group"><label htmlFor="node-link">Odnośnik</label><input id="node-link" value={node.linkUrl ?? ""} placeholder="https://… lub file:///…" disabled={disabled} onChange={(event) => onUpdateNode(node.id, { linkUrl: event.target.value })} /></div>
             {node.linkUrl && <a className="external-link-open" href={node.linkUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Otwórz odnośnik</a>}
+          </>}
+
+          {section === "flashcards" && <>
+            <div className="inspector-note"><BookOpen size={15} /><p>Fiszki są przypisane do tego elementu i pojawiają się w bibliotece do powtórek.</p></div>
+            <FlashcardsEditor node={node} disabled={disabled} onUpdateNode={onUpdateNode} />
           </>}
 
           {disabled && <div className="inspector-note"><Tag size={15} /><p>Element jest zablokowany. Odblokuj go z paska nad zaznaczeniem, aby edytować jego wartości.</p></div>}

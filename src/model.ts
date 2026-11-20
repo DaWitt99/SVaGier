@@ -5,7 +5,7 @@ export type ShapeKind =
   | "useCase" | "interface" | "abstractClass" | "package" | "component" | "artifact" | "deploymentNode"
   | "boundary" | "control" | "entity" | "initialState" | "finalState" | "state" | "forkJoin" | "lifeline"
   | "activation" | "providedInterface" | "requiredInterface" | "freehand" | "image";
-export type InspectorSection = "content" | "style" | "size" | "details" | "link";
+export type InspectorSection = "content" | "style" | "size" | "details" | "link" | "flashcards";
 export type MindMapLayout = "manual" | "tree" | "radial" | "horizontal";
 export type NodePriority = "low" | "medium" | "high";
 export type DiagramFontFamily = "sans" | "serif" | "monospace";
@@ -15,6 +15,22 @@ export interface CurvePoint {
   y: number;
   controlIn?: { x: number; y: number };
   controlOut?: { x: number; y: number };
+}
+
+export interface Flashcard {
+  id: string;
+  front: string;
+  back: string;
+}
+
+export interface FlashcardEntry {
+  card: Flashcard;
+  nodeId: string;
+  nodeTitle: string;
+  projectId: string;
+  projectName: string;
+  drawingId: string;
+  drawingTitle: string;
 }
 
 export interface DiagramNode {
@@ -48,6 +64,7 @@ export interface DiagramNode {
   imageData?: string;
   imageSrc?: string;
   linkUrl?: string;
+  flashcards?: Flashcard[];
   pathPoints?: CurvePoint[];
 }
 

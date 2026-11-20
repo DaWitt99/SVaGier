@@ -30,9 +30,11 @@ interface PointerDragSession {
   active: boolean;
 }
 
+type DropMode = "before" | "child" | "after" | "parent" | "invalid";
+
 export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect, onToggleCollapse, onLayoutChange, onReorder, onMoveAsChild, onClose }: OutlinePanelProps) {
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{ nodeId: string; mode: "before" | "child" | "after" | "invalid" } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ nodeId: string; mode: DropMode } | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const pointerDragRef = useRef<PointerDragSession | null>(null);
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -47,16 +49,28 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
   for (const siblings of children.values()) siblings.sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
   const roots = nodes.filter((node) => !node.parentId || !nodeIds.has(node.parentId)).sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
   const visited = new Set<string>();
-  const getDropMode = (sourceId: string, target: DiagramNode, clientY: number, top: number, height: number): "before" | "child" | "after" | "invalid" => {
-    const source = nodeById.get(sourceId);
-    if (!source || source.locked || target.locked || source.id === target.id) return "invalid";
-    let ancestorId = target.parentId;
+  const canMoveAsChild = (child: DiagramNode, parent: DiagramNode): boolean => {
+    if (child.id === parent.id || child.locked || parent.locked) return false;
+    let ancestorId: string | undefined = parent.id;
     const seen = new Set<string>();
     while (ancestorId && !seen.has(ancestorId)) {
-      if (ancestorId === source.id) return "invalid";
+      if (ancestorId === child.id) return false;
       seen.add(ancestorId);
       ancestorId = nodeById.get(ancestorId)?.parentId;
     }
+    return true;
+  };
+
+  const getDropMode = (sourceId: string, target: DiagramNode, clientY: number, top: number, height: number, shiftKey: boolean, ctrlKey: boolean): DropMode => {
+    const source = nodeById.get(sourceId);
+    if (!source || source.id === target.id) return "invalid";
+    if (shiftKey || ctrlKey) {
+      const child = shiftKey ? source : target;
+      const parent = shiftKey ? target : source;
+      if (!canMoveAsChild(child, parent) || child.parentId === parent.id) return "invalid";
+      return shiftKey ? "child" : "parent";
+    }
+    if (!canMoveAsChild(source, target)) return "invalid";
     if (source.parentId !== target.parentId) return "child";
     const offset = clientY - top;
     if (offset <= height * 0.24) return "before";
@@ -98,7 +112,7 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
       return;
     }
     const bounds = hit.element.getBoundingClientRect();
-    const mode = getDropMode(session.sourceId, hit.node, event.clientY, bounds.top, bounds.height);
+    const mode = getDropMode(session.sourceId, hit.node, event.clientY, bounds.top, bounds.height, event.shiftKey, event.ctrlKey);
     setDropTarget((current) => current?.nodeId === hit.node.id && current.mode === mode ? current : { nodeId: hit.node.id, mode });
   };
 
@@ -109,8 +123,12 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
       const hit = findDropTarget(event.clientX, event.clientY);
       if (hit) {
         const bounds = hit.element.getBoundingClientRect();
-        const mode = getDropMode(session.sourceId, hit.node, event.clientY, bounds.top, bounds.height);
+        const mode = getDropMode(session.sourceId, hit.node, event.clientY, bounds.top, bounds.height, event.shiftKey, event.ctrlKey);
         if (mode === "child") onMoveAsChild(session.sourceId, hit.node.id);
+        else if (mode === "parent") {
+          onMoveAsChild(hit.node.id, session.sourceId);
+          onSelect(session.sourceId);
+        }
         else if (mode === "before" || mode === "after") onReorder(session.sourceId, hit.node.id, mode === "after");
       }
     }
@@ -153,6 +171,7 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
             <span className="outline-priority" data-priority={node.priority ?? "none"} />
             <span className="outline-node-title">{node.title || "Bez nazwy"}</span>
             {dropTarget?.nodeId === node.id && dropTarget.mode === "child" && <span className="outline-drop-hint">jako dziecko</span>}
+            {dropTarget?.nodeId === node.id && dropTarget.mode === "parent" && <span className="outline-drop-hint is-parent">jako rodzic</span>}
             {label && <span className="outline-label">{label}</span>}
             {node.notes?.trim() && <span className="outline-note-dot" title="Węzeł ma notatkę" />}
             {node.comments?.trim() && <span className="outline-comment-dot" title="Węzeł ma komentarz" />}
@@ -191,7 +210,7 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
       <footer className="outline-panel-footer">
         <span><kbd>Tab</kbd> gałąź</span>
         <span><kbd>Enter</kbd> ten sam poziom</span>
-        <small>Uchwyt przeciąga element: góra/dół zmienia kolejność, środek ustawia go jako dziecko.</small>
+        <small>Shift + upuść: źródło jako dziecko · Ctrl + upuść: źródło jako rodzic. Bez klawiszy góra/dół zmienia kolejność, środek ustawia źródło jako dziecko.</small>
       </footer>
     </section>
   );

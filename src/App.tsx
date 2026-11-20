@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowDownToLine,
+  BookOpen,
   Check,
   FolderOpen,
-  Hand,
-  Pencil,
   ImagePlus,
   Lock,
   Unlock,
@@ -13,7 +12,6 @@ import {
   Layers,
   Maximize,
   MousePointer2,
-  Plus,
   PencilLine,
   Shapes,
   Spline,
@@ -26,9 +24,10 @@ import InspectorPanel from "./components/InspectorPanel";
 import OutlinePanel from "./components/OutlinePanel";
 import ProjectExplorerPanel from "./components/ProjectExplorerPanel";
 import ShapeLibraryPanel from "./components/ShapeLibraryPanel";
+import FlashcardLibraryView from "./components/FlashcardLibraryView";
 import { downloadSvg } from "./exportSvg";
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./components/DiagramCanvas";
-import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type DiagramProject, type EditorSettings, type GuideAxis, type InspectorSection, type MindMapLayout, type ProjectDrawing, type ProjectWorkspace, type ShapeKind } from "./model";
+import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type DiagramProject, type EditorSettings, type Flashcard, type FlashcardEntry, type GuideAxis, type InspectorSection, type MindMapLayout, type ProjectDrawing, type ProjectWorkspace, type ShapeKind } from "./model";
 import { getVisibleMindMapNodes, layoutMindMap } from "./mindmapLayout";
 import { shapeDefinition } from "./shapeLibrary";
 
@@ -60,9 +59,16 @@ function normalizeDocument(value: unknown): DiagramDocument | null {
       })
     : parsed.nodes;
   const edges = isLegacyStarterMap ? parsed.edges.filter((edge) => !(edge.from === "idea" && starterBranches.has(edge.to))) : parsed.edges;
+  const normalizedNodes = nodes.map((node) => ({
+    ...node,
+    flashcards: Array.isArray(node.flashcards) ? node.flashcards.flatMap((card) => {
+      if (!isRecord(card) || typeof card.id !== "string" || typeof card.front !== "string" || typeof card.back !== "string") return [];
+      return [{ id: card.id, front: card.front, back: card.back }];
+    }) : undefined,
+  }));
   return {
     ...parsed,
-    nodes,
+    nodes: normalizedNodes,
     edges,
     editor: {
       ...editor,
@@ -163,13 +169,25 @@ function App() {
     ...project,
     drawings: project.drawings.map((drawing) => drawing.id === project.activeDrawingId ? { ...drawing, document } : drawing),
   });
+  const flashcardEntries = useMemo<FlashcardEntry[]>(() => visibleProjects.flatMap((project) => project.drawings.flatMap((drawing) =>
+    drawing.document.nodes.flatMap((node) => (node.flashcards ?? []).map((card: Flashcard) => ({
+      card,
+      nodeId: node.id,
+      nodeTitle: node.title || "Bez nazwy",
+      projectId: project.id,
+      projectName: project.name,
+      drawingId: drawing.id,
+      drawingTitle: drawing.document.title,
+    }))),
+  )), [workspace, document]);
   const historyRef = useRef<{ past: DiagramDocument[]; future: DiagramDocument[] }>({ past: [], future: [] });
   const historyActionRef = useRef<DiagramDocument | null>(null);
   const [historyStatus, setHistoryStatus] = useState({ undo: 0, redo: 0 });
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(["idea"]);
   const [activeInspectorSection, setActiveInspectorSection] = useState<InspectorSection | null>(null);
-  const [toolMode, setToolMode] = useState<"select" | "pan" | "freehand">("select");
+  const [toolMode, setToolMode] = useState<"select" | "freehand">("select");
   const [showShapeLibrary, setShowShapeLibrary] = useState(false);
+  const [showFlashcardLibrary, setShowFlashcardLibrary] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
   const [showProjectExplorer, setShowProjectExplorer] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState<WorkspaceDialog | null>(null);
@@ -242,6 +260,7 @@ function App() {
     setSelectedNodeIds([]);
     setSelectedEdgeId(null);
     setActiveInspectorSection(null);
+    setShowFlashcardLibrary(false);
     setCamera({ x: 0, y: 0, zoom: 1 });
     setConnectMode(false);
     setConnectSourceId(null);
@@ -313,6 +332,24 @@ function App() {
     };
     updateWorkspace(() => next);
     startDrawing(drawing.document);
+  }
+
+  function openFlashcardSource(entry: FlashcardEntry) {
+    openProjectDrawing(entry.projectId, entry.drawingId);
+    setShowFlashcardLibrary(false);
+    setShowProjectExplorer(false);
+    setSelectedNodeIds([entry.nodeId]);
+    setSelectedEdgeId(null);
+    setActiveInspectorSection("flashcards");
+    const node = documentRef.current.nodes.find((item) => item.id === entry.nodeId);
+    if (node) {
+      const zoom = 1;
+      setCamera({
+        x: CANVAS_WIDTH / 2 - (node.x + node.width / 2) * zoom,
+        y: CANVAS_HEIGHT / 2 - (node.y + node.height / 2) * zoom,
+        zoom,
+      });
+    }
   }
 
   function requestRenameProject(projectId: string) {
@@ -837,8 +874,38 @@ function App() {
         if (node.id === parent.id) return { ...node, collapsed: false, ...(siblingOrder === undefined ? {} : { siblingOrder }) };
         return siblingOrder === undefined ? node : { ...node, siblingOrder };
       });
+      let arrangedNodes = layoutMindMap(nodes, current.editor.mindmapLayout);
+      if (current.editor.mindmapLayout === "manual") {
+        const movedChild = arrangedNodes.find((node) => node.id === source.id);
+        const newParent = arrangedNodes.find((node) => node.id === parent.id);
+        const overlaps = movedChild && newParent
+          && movedChild.x < newParent.x + newParent.width
+          && movedChild.x + movedChild.width > newParent.x
+          && movedChild.y < newParent.y + newParent.height
+          && movedChild.y + movedChild.height > newParent.y;
+        if (movedChild && newParent && overlaps) {
+          const moveRight = movedChild.x + movedChild.width / 2 >= newParent.x + newParent.width / 2;
+          const targetX = moveRight ? newParent.x + newParent.width + 84 : newParent.x - movedChild.width - 84;
+          const deltaX = targetX - movedChild.x;
+          const deltaY = newParent.y + newParent.height / 2 - (movedChild.y + movedChild.height / 2);
+          const branchIds = new Set([movedChild.id]);
+          let foundChild = true;
+          while (foundChild) {
+            foundChild = false;
+            for (const node of arrangedNodes) {
+              if (node.parentId && branchIds.has(node.parentId) && !branchIds.has(node.id)) {
+                branchIds.add(node.id);
+                foundChild = true;
+              }
+            }
+          }
+          arrangedNodes = arrangedNodes.map((node) => branchIds.has(node.id)
+            ? { ...node, x: node.x + deltaX, y: node.y + deltaY }
+            : node);
+        }
+      }
       moved = true;
-      return { ...current, nodes: layoutMindMap(nodes, current.editor.mindmapLayout) };
+      return { ...current, nodes: arrangedNodes };
     });
     if (!moved) return;
     setSelectedNodeIds([nodeId]);
@@ -1102,6 +1169,12 @@ function App() {
             onChange={(event) => updateDocumentTitle(event.target.value)}
           />
         </div>
+        <div className="topbar-actions" role="toolbar" aria-label="Historia i eksport">
+          <button className="topbar-action" type="button" aria-label="Cofnij" title="Cofnij · Ctrl/Cmd+Z" disabled={!historyStatus.undo} onClick={undo}><Undo2 size={16} /></button>
+          <button className="topbar-action" type="button" aria-label="Ponów" title="Ponów · Ctrl/Cmd+Shift+Z" disabled={!historyStatus.redo} onClick={redo}><Redo2 size={16} /></button>
+          <span className="topbar-action-divider" />
+          <button className="topbar-action topbar-export" type="button" aria-label="Eksportuj diagram jako SVG" title="Eksportuj SVG" onClick={() => downloadSvg(document)}><ArrowDownToLine size={17} /></button>
+        </div>
         <div className="save-status" aria-live="polite">
           {saved ? <Check size={14} /> : <span className="saving-dot" />}
           <span>{saved ? "Zapisano lokalnie" : "Zapisywanie…"}</span>
@@ -1111,26 +1184,37 @@ function App() {
       <div className="workspace">
         <aside className="tool-rail" aria-label="Menu narzędzi">
           <div className="rail-group">
-            <button className={`rail-button${showProjectExplorer ? " active" : ""}`} type="button" aria-label="Otwórz eksplorator projektów" title="Projekty i rysunki" aria-expanded={showProjectExplorer} onClick={() => setShowProjectExplorer((open) => !open)}>
+            <button className={`rail-button${showProjectExplorer ? " active" : ""}`} type="button" aria-label="Otwórz eksplorator projektów" title="Projekty i rysunki" aria-expanded={showProjectExplorer} onClick={() => { setShowFlashcardLibrary(false); setShowProjectExplorer((open) => !open); }}>
               <FolderOpen size={18} />
             </button>
           </div>
           <div className="rail-divider" />
           <div className="rail-group">
-            <button className={`rail-button${toolMode === "select" ? " active" : ""}`} type="button" aria-label="Zaznaczanie" title="Zaznaczanie" aria-pressed={toolMode === "select"} onClick={() => setToolMode("select")}>
+            <button className={`rail-button${toolMode === "select" ? " active" : ""}`} type="button" aria-label="Zaznaczanie" title="Zaznaczanie" aria-pressed={toolMode === "select"} onClick={() => { setShowFlashcardLibrary(false); setToolMode("select"); }}>
               <MousePointer2 size={19} />
             </button>
-            <button className={`rail-button${toolMode === "pan" ? " active" : ""}`} type="button" aria-label="Przesuwanie płótna" title="Przesuwanie płótna" aria-pressed={toolMode === "pan"} onClick={() => setToolMode("pan")}>
-              <Hand size={18} />
-            </button>
-            <button className={`rail-button${toolMode === "freehand" ? " active" : ""}`} type="button" aria-label="Rysowanie odręczne" title="Rysowanie krzywych Béziera" aria-pressed={toolMode === "freehand"} onClick={() => { setToolMode("freehand"); setConnectMode(false); }}>
-              <Pencil size={18} />
-            </button>
-            <button className={`rail-button${showShapeLibrary ? " active" : ""}`} type="button" aria-label="Otwórz bibliotekę kształtów" title="Biblioteka kształtów i symboli" aria-expanded={showShapeLibrary} onClick={() => setShowShapeLibrary((current) => { if (!current) { setShowCanvasSettings(false); setShowOutline(false); } return !current; })}>
+            <button className={`rail-button${showShapeLibrary ? " active" : ""}`} type="button" aria-label="Otwórz bibliotekę kształtów" title="Biblioteka kształtów i symboli" aria-expanded={showShapeLibrary} onClick={() => { setShowFlashcardLibrary(false); setShowShapeLibrary((current) => { if (!current) { setShowCanvasSettings(false); setShowOutline(false); } return !current; }); }}>
               <Shapes size={18} />
             </button>
-            <button className="rail-button" type="button" aria-label="Dodaj element" title="Dodaj element" onClick={() => addNode()}>
-              <Plus size={20} />
+            <button
+              className={`rail-button${showFlashcardLibrary ? " active" : ""}`}
+              type="button"
+              aria-label="Otwórz bibliotekę fiszek"
+              title="Biblioteka fiszek · powtórki"
+              aria-pressed={showFlashcardLibrary}
+              onClick={() => {
+                const next = !showFlashcardLibrary;
+                setShowFlashcardLibrary(next);
+                if (next) {
+                  setShowShapeLibrary(false);
+                  setShowOutline(false);
+                  setShowCanvasSettings(false);
+                  setShowProjectExplorer(false);
+                  setActiveInspectorSection(null);
+                }
+              }}
+            >
+              <BookOpen size={18} />
             </button>
             <button
               className={`rail-button${connectMode ? " active" : ""}`}
@@ -1139,39 +1223,28 @@ function App() {
               title={connectMode ? (connectSourceId ? "Wybierz drugi element · kliknij, aby zakończyć" : "Wybierz pierwszy element · kliknij, aby zakończyć") : "Połącz elementy"}
               aria-pressed={connectMode}
               onClick={() => {
+                setShowFlashcardLibrary(false);
                 setConnectMode((current) => !current);
                 setConnectSourceId(null);
               }}
             >
               <Spline size={19} />
             </button>
-            <button className="rail-button" type="button" aria-label="Wstaw obraz" title="Wstaw obraz z pliku" onClick={() => imageInputRef.current?.click()}>
+            <button className="rail-button" type="button" aria-label="Wstaw obraz" title="Wstaw obraz z pliku" onClick={() => { setShowFlashcardLibrary(false); imageInputRef.current?.click(); }}>
               <ImagePlus size={17} />
             </button>
             <input ref={imageInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={handleImageFile} />
           </div>
           <div className="rail-divider" />
           <div className="rail-group">
-            <button className={`rail-button${showOutline ? " active" : ""}`} type="button" aria-label="Otwórz konspekt mapy" title="Konspekt i układy mapy myśli" aria-expanded={showOutline} onClick={() => setShowOutline((current) => { if (!current) { setShowShapeLibrary(false); setShowCanvasSettings(false); } return !current; })}>
+            <button className={`rail-button${showOutline ? " active" : ""}`} type="button" aria-label="Otwórz konspekt mapy" title="Konspekt i układy mapy myśli" aria-expanded={showOutline} onClick={() => { setShowFlashcardLibrary(false); setShowOutline((current) => { if (!current) { setShowShapeLibrary(false); setShowCanvasSettings(false); } return !current; }); }}>
               <Layers size={17} />
             </button>
-            <button className={`rail-button${showCanvasSettings ? " active" : ""}`} type="button" aria-label="Ustawienia widoku" title="Siatka, linijki, prowadnice i zapisane widoki" aria-expanded={showCanvasSettings} onClick={() => setShowCanvasSettings((current) => { if (!current) { setShowShapeLibrary(false); setShowOutline(false); } return !current; })}>
+            <button className={`rail-button${showCanvasSettings ? " active" : ""}`} type="button" aria-label="Ustawienia widoku" title="Siatka, linijki, prowadnice i zapisane widoki" aria-expanded={showCanvasSettings} onClick={() => { setShowFlashcardLibrary(false); setShowCanvasSettings((current) => { if (!current) { setShowShapeLibrary(false); setShowOutline(false); } return !current; }); }}>
               <SlidersHorizontal size={17} />
             </button>
-            <button className="rail-button" type="button" aria-label="Dopasuj cały diagram do widoku" title="Dopasuj cały diagram do widoku" onClick={fitDiagram}>
+            <button className="rail-button" type="button" aria-label="Dopasuj cały diagram do widoku" title="Dopasuj cały diagram do widoku" onClick={() => { setShowFlashcardLibrary(false); fitDiagram(); }}>
               <Maximize size={16} />
-            </button>
-          </div>
-          <div className="rail-divider" />
-          <div className="rail-group">
-            <button className="rail-button" type="button" aria-label="Cofnij" title="Cofnij · Ctrl/Cmd+Z" disabled={!historyStatus.undo} onClick={undo}>
-              <Undo2 size={17} />
-            </button>
-            <button className="rail-button" type="button" aria-label="Ponów" title="Ponów · Ctrl/Cmd+Shift+Z" disabled={!historyStatus.redo} onClick={redo}>
-              <Redo2 size={17} />
-            </button>
-            <button className="rail-button rail-export" type="button" aria-label="Eksportuj diagram jako SVG" title="Eksportuj SVG" onClick={() => downloadSvg(document)}>
-              <ArrowDownToLine size={18} />
             </button>
           </div>
         </aside>
@@ -1190,7 +1263,7 @@ function App() {
           onClose={() => setShowProjectExplorer(false)}
         />}
 
-        {activeInspectorSection && (selectedNode || selectedEdge) && (
+        {!showFlashcardLibrary && activeInspectorSection && (selectedNode || selectedEdge) && (
           <InspectorPanel
             section={activeInspectorSection}
             selectedNode={selectedNode}
@@ -1205,6 +1278,7 @@ function App() {
         )}
 
         <main className="editor-area">
+          {showFlashcardLibrary ? <FlashcardLibraryView entries={flashcardEntries} onOpenSource={openFlashcardSource} onClose={() => setShowFlashcardLibrary(false)} /> : <>
           {selectedNodeIds.length > 1 && (
             <div className="selection-toolbar" role="toolbar" aria-label="Narzędzia zaznaczania i układania">
               <span className="selection-toolbar-count">{selectedNodeIds.length} zazn.</span>
@@ -1258,6 +1332,7 @@ function App() {
               onCameraChange={setCamera}
               onSetSelection={(ids) => { setSelectedNodeIds(ids); if (ids.length === 0) setActiveInspectorSection(null); }}
               onMoveNodes={moveNodes}
+              onMoveAsChild={moveMindMapNodeAsChild}
               onBeginHistoryAction={beginHistoryAction}
               onEndHistoryAction={endHistoryAction}
               onConnectNode={handleConnectNode}
@@ -1318,6 +1393,7 @@ function App() {
               <span>{document.edges.length + treeBranchCount} połączeń</span>
             </div>
           </section>
+          </>}
         </main>
 
       </div>
