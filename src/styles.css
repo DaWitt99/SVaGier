@@ -1859,12 +1859,19 @@ kbd {
   color: var(--purple-dark);
 }
 
-.object-context-toolbar {
+.object-context-anchor {
   position: absolute;
   z-index: 5;
-  display: flex;
   width: max-content;
   max-width: calc(100% - 16px);
+  transform: translateX(-50%);
+}
+
+.object-context-toolbar {
+  position: relative;
+  display: flex;
+  width: max-content;
+  max-width: min(760px, calc(100vw - 24px));
   align-items: center;
   gap: 3px;
   overflow-x: auto;
@@ -1873,7 +1880,6 @@ kbd {
   border-radius: 11px;
   background: #fff;
   box-shadow: 0 5px 18px #302e4524;
-  transform: translateX(-50%);
   scrollbar-width: none;
 }
 
@@ -1913,6 +1919,90 @@ kbd {
   margin: 0 2px;
   background: #e9e8f0;
 }
+
+.hierarchy-insert-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 7;
+  display: grid;
+  width: min(310px, calc(100vw - 24px));
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid #e6e4ef;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 30px #302e4528;
+  color: #302f43;
+}
+
+.hierarchy-insert-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.hierarchy-insert-heading button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #77768b;
+  cursor: pointer;
+}
+
+.hierarchy-insert-heading button:hover { background: #f2efff; color: var(--purple-dark); }
+
+.hierarchy-insert-label {
+  color: #77768b;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.hierarchy-insert-popover select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #e6e4ef;
+  border-radius: 7px;
+  background: #fff;
+  color: #302f43;
+  font: inherit;
+  font-size: 11px;
+}
+
+.hierarchy-insert-action,
+.hierarchy-insert-parent-action {
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid #ded8fb;
+  border-radius: 7px;
+  background: #f2efff;
+  color: var(--purple-dark);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hierarchy-insert-parent-action {
+  border-color: #e6e4ef;
+  background: #fff;
+  color: #57566c;
+}
+
+.hierarchy-insert-action:hover:not(:disabled) { background: #e9e3ff; }
+.hierarchy-insert-parent-action:hover:not(:disabled) { background: #f8f7fb; }
+.hierarchy-insert-action:disabled,
+.hierarchy-insert-parent-action:disabled { cursor: default; opacity: 0.45; }
+
+.hierarchy-insert-divider { height: 1px; background: #eeedf3; }
 
 .shape-symbol-line,
 .uml-fold,

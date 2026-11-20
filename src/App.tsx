@@ -394,6 +394,77 @@ function App() {
     addBranchNode(nodeId, "sibling");
   }
 
+  function addParentNode(nodeId: string) {
+    const id = `branch-${crypto.randomUUID()}`;
+    let created = false;
+    updateDocument((current) => {
+      const selected = current.nodes.find((node) => node.id === nodeId);
+      if (!selected || selected.locked) return current;
+      const siblings = current.nodes
+        .filter((node) => node.parentId === selected.parentId)
+        .sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+      const selectedIndex = siblings.findIndex((node) => node.id === selected.id);
+      if (selectedIndex < 0) return current;
+      const newParent: DiagramNode = {
+        id,
+        kind: "process",
+        x: selected.x - 286,
+        y: selected.y,
+        width: 196,
+        height: 84,
+        title: "Nowa gałąź",
+        detail: "",
+        parentId: selected.parentId,
+        siblingOrder: selectedIndex,
+        fill: selected.fill,
+        stroke: selected.stroke,
+        textColor: selected.textColor,
+      };
+      const nodes = current.nodes.map((node) => {
+        if (node.id === selected.id) return { ...node, parentId: id, siblingOrder: 0 };
+        if (node.parentId === selected.parentId && (node.siblingOrder ?? 0) >= selectedIndex) {
+          return { ...node, siblingOrder: (node.siblingOrder ?? 0) + 1 };
+        }
+        return node;
+      }).concat(newParent);
+      created = true;
+      return { ...current, nodes: layoutMindMap(nodes, current.editor.mindmapLayout) };
+    });
+    if (!created) return;
+    setSelectedNodeIds([id]);
+    setSelectedEdgeId(null);
+    setConnectMode(false);
+    setConnectSourceId(null);
+    setToolMode("select");
+  }
+
+  function addRootBranchNode() {
+    const id = `branch-${crypto.randomUUID()}`;
+    updateDocument((current) => {
+      const ids = new Set(current.nodes.map((node) => node.id));
+      const roots = current.nodes
+        .filter((node) => !node.parentId || !ids.has(node.parentId))
+        .sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+      const newNode: DiagramNode = {
+        id,
+        kind: "process",
+        x: (CANVAS_WIDTH / 2 - camera.x) / camera.zoom - 98 + (roots.length % 3) * 36,
+        y: (CANVAS_HEIGHT / 2 - camera.y) / camera.zoom - 42 + (roots.length % 3) * 36,
+        width: 196,
+        height: 84,
+        title: "Nowa gałąź",
+        detail: "",
+        siblingOrder: roots.length,
+      };
+      return { ...current, nodes: layoutMindMap([...current.nodes, newNode], current.editor.mindmapLayout) };
+    });
+    setSelectedNodeIds([id]);
+    setSelectedEdgeId(null);
+    setConnectMode(false);
+    setConnectSourceId(null);
+    setToolMode("select");
+  }
+
   function toggleBranchCollapsed(nodeId: string) {
     const node = documentRef.current.nodes.find((item) => item.id === nodeId);
     if (!node) return;
@@ -853,6 +924,7 @@ function App() {
           <section className="canvas-stage" aria-label="Obszar roboczy">
             <DiagramCanvas
               nodes={visibleNodes}
+              allNodes={document.nodes}
               edges={document.edges}
               settings={document.editor}
               camera={camera}
@@ -866,6 +938,8 @@ function App() {
               onOpenInspector={setActiveInspectorSection}
               onAddChildNode={addChildNode}
               onAddSiblingNode={addSiblingNode}
+              onAddParentNode={addParentNode}
+              onAddRootNode={addRootBranchNode}
               onToggleLockSelected={toggleLockSelected}
               onDeleteSelection={() => selectedEdge ? removeSelectedEdge() : removeSelectedNode()}
               onCameraChange={setCamera}

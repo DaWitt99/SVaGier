@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
-import { CornerDownRight, GitBranchPlus, Link2, Lock, Palette, Ruler, Tags, Trash2, Type, Unlock, Spline } from "lucide-react";
+import { CornerDownRight, GitBranch, GitBranchPlus, Link2, Lock, Palette, Ruler, Tags, Trash2, Type, Unlock, Spline, X } from "lucide-react";
 import type { Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, InspectorSection, MeasurementUnit } from "../model";
 import { formatMeasurement } from "../units";
 import { shapeDefinition } from "../shapeLibrary";
@@ -17,10 +17,13 @@ interface DiagramCanvasProps {
   connectMode: boolean;
   connectSourceId: string | null;
   selectedEdgeId: string | null;
+  allNodes: DiagramNode[];
   activeInspectorSection: InspectorSection | null;
   onOpenInspector: (section: InspectorSection) => void;
   onAddChildNode: (id: string) => void;
   onAddSiblingNode: (id: string) => void;
+  onAddParentNode: (id: string) => void;
+  onAddRootNode: () => void;
   onToggleLockSelected: () => void;
   onDeleteSelection: () => void;
   onCameraChange: (camera: Camera) => void;
@@ -366,27 +369,68 @@ function SelectionOverlay({ bounds, camera }: { bounds: WorldBounds | null; came
   );
 }
 
+const ROOT_INSERT_ID = "__svagier_root__";
+
+function hierarchyOptions(nodes: DiagramNode[]): { node: DiagramNode; depth: number }[] {
+  const ids = new Set(nodes.map((node) => node.id));
+  const children = new Map<string, DiagramNode[]>();
+  for (const node of nodes) {
+    if (!node.parentId || !ids.has(node.parentId)) continue;
+    const siblings = children.get(node.parentId) ?? [];
+    siblings.push(node);
+    children.set(node.parentId, siblings);
+  }
+  for (const siblings of children.values()) siblings.sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+  const roots = nodes.filter((node) => !node.parentId || !ids.has(node.parentId)).sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+  const result: { node: DiagramNode; depth: number }[] = [];
+  const visited = new Set<string>();
+  function visit(node: DiagramNode, depth: number) {
+    if (visited.has(node.id)) return;
+    visited.add(node.id);
+    result.push({ node, depth });
+    for (const child of children.get(node.id) ?? []) visit(child, depth + 1);
+  }
+  for (const root of roots) visit(root, 0);
+  for (const node of nodes) if (!visited.has(node.id)) visit(node, 0);
+  return result;
+}
+
 function ObjectContextToolbar({
   node,
+  allNodes,
   edgeSelected,
   activeSection,
   position,
   onOpenInspector,
   onAddChild,
   onAddSibling,
+  onAddParent,
+  onAddAtParent,
+  onAddRoot,
   onToggleLock,
   onDelete,
 }: {
   node: DiagramNode | null;
+  allNodes: DiagramNode[];
   edgeSelected: boolean;
   activeSection: InspectorSection | null;
   position: { left: number; top: number };
   onOpenInspector: (section: InspectorSection) => void;
   onAddChild: () => void;
   onAddSibling: () => void;
+  onAddParent: () => void;
+  onAddAtParent: (parentId: string) => void;
+  onAddRoot: () => void;
   onToggleLock: () => void;
   onDelete: () => void;
 }) {
+  const [hierarchyMenuOpen, setHierarchyMenuOpen] = useState(false);
+  const [insertParentId, setInsertParentId] = useState(node?.id ?? ROOT_INSERT_ID);
+  const hierarchyRows = hierarchyOptions(allNodes);
+  useEffect(() => {
+    setHierarchyMenuOpen(false);
+    setInsertParentId(node?.id ?? ROOT_INSERT_ID);
+  }, [node?.id]);
   if (!node && !edgeSelected) return null;
   const nodeOptions: { section: InspectorSection; label: string; icon: typeof Type }[] = [
     { section: "content", label: "Edytuj treść", icon: Type },
@@ -401,27 +445,51 @@ function ObjectContextToolbar({
   ];
   const options = edgeSelected ? edgeOptions : nodeOptions;
 
+  const selectedParent = allNodes.find((item) => item.id === insertParentId);
+  const insertDisabled = insertParentId !== ROOT_INSERT_ID && (!selectedParent || selectedParent.locked);
+
   return (
     <div
-      className="object-context-toolbar"
+      className="object-context-anchor"
       style={{ left: position.left, top: position.top }}
-      role="toolbar"
-      aria-label="Opcje zaznaczonego obiektu"
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      {options.map(({ section, label, icon: Icon }) => (
-        <button key={section} type="button" className={activeSection === section ? "active" : ""} aria-label={label} title={label} aria-pressed={activeSection === section} onClick={() => onOpenInspector(section)}>
-          <Icon size={15} />
+      <div className="object-context-toolbar" role="toolbar" aria-label="Opcje zaznaczonego obiektu">
+        {options.map(({ section, label, icon: Icon }) => (
+          <button key={section} type="button" className={activeSection === section ? "active" : ""} aria-label={label} title={label} aria-pressed={activeSection === section} onClick={() => onOpenInspector(section)}>
+            <Icon size={15} />
+          </button>
+        ))}
+        {node && <>
+          <span className="object-context-divider" />
+          <button type="button" aria-label="Dodaj podgałąź" title="Dodaj podgałąź (Tab)" disabled={node.locked} onClick={onAddChild}><GitBranchPlus size={15} /></button>
+          <button type="button" aria-label="Dodaj element na tym samym poziomie" title="Dodaj element na tym samym poziomie (Enter)" disabled={node.locked} onClick={onAddSibling}><CornerDownRight size={15} /></button>
+          <button type="button" className={hierarchyMenuOpen ? "active" : ""} aria-label="Dodaj element w dowolnym miejscu hierarchii" title="Dodaj element w dowolnym miejscu hierarchii" aria-expanded={hierarchyMenuOpen} onClick={() => { setInsertParentId(node.id); setHierarchyMenuOpen((open) => !open); }}><GitBranch size={15} /></button>
+          <button type="button" aria-label={node.locked ? "Odblokuj element" : "Zablokuj element"} title={node.locked ? "Odblokuj element" : "Zablokuj element"} onClick={onToggleLock}>{node.locked ? <Unlock size={15} /> : <Lock size={15} />}</button>
+        </>}
+        <button type="button" className="context-delete-button" aria-label="Usuń zaznaczony obiekt" title="Usuń zaznaczony obiekt" disabled={Boolean(node?.locked)} onClick={onDelete}><Trash2 size={15} /></button>
+      </div>
+      {hierarchyMenuOpen && node && <div className="hierarchy-insert-popover" role="dialog" aria-label="Dodaj element w hierarchii">
+        <div className="hierarchy-insert-heading">
+          <strong>Dodaj element w hierarchii</strong>
+          <button type="button" aria-label="Zamknij" title="Zamknij" onClick={() => setHierarchyMenuOpen(false)}><X size={15} /></button>
+        </div>
+        <label className="hierarchy-insert-label" htmlFor="hierarchy-insert-parent">Rodzic nowego elementu</label>
+        <select id="hierarchy-insert-parent" value={insertParentId} onChange={(event) => setInsertParentId(event.target.value)}>
+          <option value={ROOT_INSERT_ID}>Poziom główny</option>
+          {hierarchyRows.map(({ node: option, depth }) => <option key={option.id} value={option.id} disabled={option.locked}>
+            {`${"　".repeat(Math.min(depth, 8))}${depth ? "└ " : ""}${option.title || "Bez nazwy"}`}
+          </option>)}
+        </select>
+        <button className="hierarchy-insert-action" type="button" disabled={insertDisabled} onClick={() => { if (insertParentId === ROOT_INSERT_ID) onAddRoot(); else onAddAtParent(insertParentId); setHierarchyMenuOpen(false); }}>
+          Dodaj na wybranym poziomie
         </button>
-      ))}
-      {node && <>
-        <span className="object-context-divider" />
-        <button type="button" aria-label="Dodaj podgałąź" title="Dodaj podgałąź (Tab)" disabled={node.locked} onClick={onAddChild}><GitBranchPlus size={15} /></button>
-        <button type="button" aria-label="Dodaj element na tym samym poziomie" title="Dodaj element na tym samym poziomie (Enter)" disabled={node.locked} onClick={onAddSibling}><CornerDownRight size={15} /></button>
-        <button type="button" aria-label={node.locked ? "Odblokuj element" : "Zablokuj element"} title={node.locked ? "Odblokuj element" : "Zablokuj element"} onClick={onToggleLock}>{node.locked ? <Unlock size={15} /> : <Lock size={15} />}</button>
-      </>}
-      <button type="button" className="context-delete-button" aria-label="Usuń zaznaczony obiekt" title="Usuń zaznaczony obiekt" disabled={Boolean(node?.locked)} onClick={onDelete}><Trash2 size={15} /></button>
+        <div className="hierarchy-insert-divider" />
+        <button className="hierarchy-insert-parent-action" type="button" disabled={node.locked} onClick={() => { onAddParent(); setHierarchyMenuOpen(false); }}>
+          Utwórz rodzica zaznaczonego elementu
+        </button>
+      </div>}
     </div>
   );
 }
@@ -575,10 +643,13 @@ export default function DiagramCanvas({
   connectMode,
   connectSourceId,
   selectedEdgeId,
+  allNodes,
   activeInspectorSection,
   onOpenInspector,
   onAddChildNode,
   onAddSiblingNode,
+  onAddParentNode,
+  onAddRootNode,
   onToggleLockSelected,
   onDeleteSelection,
   onCameraChange,
@@ -1188,13 +1259,18 @@ export default function DiagramCanvas({
         {settings.showRulers && <Rulers camera={camera} unit={settings.unit} viewport={viewport} />}
       </svg>
       {contextToolbarPosition && (selectedContextNode || selectedContextEdge) && <ObjectContextToolbar
+        key={selectedContextNode?.id ?? selectedContextEdge?.id ?? "none"}
         node={selectedContextNode}
+        allNodes={allNodes}
         edgeSelected={Boolean(selectedContextEdge)}
         activeSection={activeInspectorSection}
         position={contextToolbarPosition}
         onOpenInspector={onOpenInspector}
         onAddChild={() => { if (selectedContextNode) onAddChildNode(selectedContextNode.id); }}
         onAddSibling={() => { if (selectedContextNode) onAddSiblingNode(selectedContextNode.id); }}
+        onAddParent={() => { if (selectedContextNode) onAddParentNode(selectedContextNode.id); }}
+        onAddAtParent={onAddChildNode}
+        onAddRoot={onAddRootNode}
         onToggleLock={onToggleLockSelected}
         onDelete={onDeleteSelection}
       />}
