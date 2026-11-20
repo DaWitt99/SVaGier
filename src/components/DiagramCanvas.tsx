@@ -401,6 +401,7 @@ function ObjectContextToolbar({
   edgeSelected,
   activeSection,
   position,
+  dockToInspector,
   onOpenInspector,
   onAddChild,
   onAddSibling,
@@ -415,6 +416,7 @@ function ObjectContextToolbar({
   edgeSelected: boolean;
   activeSection: InspectorSection | null;
   position: { left: number; top: number };
+  dockToInspector: boolean;
   onOpenInspector: (section: InspectorSection) => void;
   onAddChild: () => void;
   onAddSibling: () => void;
@@ -450,7 +452,7 @@ function ObjectContextToolbar({
 
   return (
     <div
-      className="object-context-anchor"
+      className={`object-context-anchor${dockToInspector ? " is-docked" : ""}`}
       style={{ left: position.left, top: position.top }}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
@@ -695,9 +697,19 @@ export default function DiagramCanvas({
   const contextScreenY = contextWorldPoint ? (camera.y + contextWorldPoint.y * camera.zoom - viewport.originY) * viewport.scale : 0;
   const contextBottomY = contextBounds ? (camera.y + (contextBounds.top + contextBounds.height) * camera.zoom - viewport.originY) * viewport.scale : contextScreenY;
   const contextIsVisible = Boolean(contextWorldPoint && contextScreenX >= 0 && contextScreenX <= frameWidth && contextScreenY <= frameHeight && contextBottomY >= 0);
+  const inspectorIsOpen = Boolean(activeInspectorSection && (selectedContextNode || selectedContextEdge));
+  const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+  const inspectorOverlaysCanvas = inspectorIsOpen && viewportWidth > 620 && viewportWidth <= 850;
+  const dockToolbarBesideInspector = inspectorOverlaysCanvas && viewportWidth <= 740;
   const contextToolbarPosition = contextIsVisible ? {
-    left: Math.max(Math.min(frameWidth / 2, 185), Math.min(frameWidth - Math.min(frameWidth / 2, 185), contextScreenX)),
-    top: Math.max(8, Math.min(frameHeight - 48, contextScreenY - 48)),
+    left: dockToolbarBesideInspector
+      ? 298
+      : inspectorOverlaysCanvas
+        ? Math.max(464, Math.min(frameWidth - 166, contextScreenX))
+        : Math.max(Math.min(frameWidth / 2, 185), Math.min(frameWidth - Math.min(frameWidth / 2, 185), contextScreenX)),
+    top: inspectorIsOpen && viewportWidth <= 620
+      ? 8
+      : Math.max(8, Math.min(frameHeight - 48, contextScreenY - 48)),
   } : null;
 
   useEffect(() => {
@@ -1265,6 +1277,7 @@ export default function DiagramCanvas({
         edgeSelected={Boolean(selectedContextEdge)}
         activeSection={activeInspectorSection}
         position={contextToolbarPosition}
+        dockToInspector={dockToolbarBesideInspector}
         onOpenInspector={onOpenInspector}
         onAddChild={() => { if (selectedContextNode) onAddChildNode(selectedContextNode.id); }}
         onAddSibling={() => { if (selectedContextNode) onAddSiblingNode(selectedContextNode.id); }}
