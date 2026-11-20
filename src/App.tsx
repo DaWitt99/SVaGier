@@ -14,6 +14,7 @@ import {
   Maximize,
   MousePointer2,
   Plus,
+  PencilLine,
   Shapes,
   Spline,
   SlidersHorizontal,
@@ -148,6 +149,11 @@ function createBlankDocument(title: string): DiagramDocument {
   };
 }
 
+type WorkspaceDialog =
+  | { kind: "rename-project"; projectId: string; name: string }
+  | { kind: "delete-project"; projectId: string; name: string; drawingCount: number }
+  | { kind: "delete-drawing"; projectId: string; drawingId: string; name: string };
+
 function App() {
   const [workspace, setWorkspaceState] = useState(loadWorkspace);
   const workspaceRef = useRef(workspace);
@@ -166,6 +172,7 @@ function App() {
   const [showShapeLibrary, setShowShapeLibrary] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
   const [showProjectExplorer, setShowProjectExplorer] = useState(false);
+  const [workspaceDialog, setWorkspaceDialog] = useState<WorkspaceDialog | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [connectMode, setConnectMode] = useState(false);
@@ -308,23 +315,54 @@ function App() {
     startDrawing(drawing.document);
   }
 
-  function renameProject(projectId: string) {
+  function requestRenameProject(projectId: string) {
     const current = workspaceRef.current;
     const project = current.projects.find((item) => item.id === projectId);
     if (!project) return;
-    const name = window.prompt("Nazwa projektu", project.name)?.trim();
-    if (!name || name === project.name) return;
-    updateWorkspace((workspace) => ({
-      ...workspace,
-      projects: workspace.projects.map((item) => item.id === project.id ? { ...item, name } : item),
-    }));
+    setWorkspaceDialog({ kind: "rename-project", projectId, name: project.name });
   }
 
-  function deleteProject(projectId: string) {
+  function requestDeleteProject(projectId: string) {
+    const project = workspaceRef.current.projects.find((item) => item.id === projectId);
+    if (!project || workspaceRef.current.projects.length <= 1) return;
+    setWorkspaceDialog({ kind: "delete-project", projectId, name: project.name, drawingCount: project.drawings.length });
+  }
+
+  function requestDeleteDrawing(projectId: string, drawingId: string) {
+    const current = workspaceRef.current;
+    const project = current.projects.find((item) => item.id === projectId);
+    if (!project || project.drawings.length <= 1) return;
+    const drawing = project.drawings.find((item) => item.id === drawingId);
+    if (!drawing) return;
+    const name = project.id === current.activeProjectId && drawingId === project.activeDrawingId
+      ? documentRef.current.title
+      : drawing.document.title;
+    setWorkspaceDialog({ kind: "delete-drawing", projectId, drawingId, name });
+  }
+
+  function confirmWorkspaceDialog() {
+    const dialog = workspaceDialog;
+    if (!dialog) return;
+    if (dialog.kind === "rename-project") {
+      const name = dialog.name.trim();
+      if (!name) return;
+      updateWorkspace((workspace) => ({
+        ...workspace,
+        projects: workspace.projects.map((item) => item.id === dialog.projectId ? { ...item, name } : item),
+      }));
+    } else if (dialog.kind === "delete-project") {
+      performDeleteProject(dialog.projectId);
+    } else {
+      performDeleteDrawing(dialog.projectId, dialog.drawingId);
+    }
+    setWorkspaceDialog(null);
+  }
+
+  function performDeleteProject(projectId: string) {
     const current = workspaceRef.current;
     if (current.projects.length <= 1) return;
     const project = current.projects.find((item) => item.id === projectId);
-    if (!project || !window.confirm(`Usunąć projekt „${project.name}” wraz ze wszystkimi rysunkami?`)) return;
+    if (!project) return;
     const committed = commitCurrentDrawing(current);
     const remaining = committed.projects.filter((item) => item.id !== project.id);
     if (project.id !== current.activeProjectId) {
@@ -337,15 +375,12 @@ function App() {
     startDrawing(drawing.document);
   }
 
-  function deleteDrawing(projectId: string, drawingId: string) {
+  function performDeleteDrawing(projectId: string, drawingId: string) {
     const current = workspaceRef.current;
     const project = current.projects.find((item) => item.id === projectId);
     if (!project || project.drawings.length <= 1) return;
     const drawing = project.drawings.find((item) => item.id === drawingId);
-    const drawingTitle = project.id === current.activeProjectId && drawingId === project.activeDrawingId
-      ? documentRef.current.title
-      : drawing?.document.title;
-    if (!drawing || !window.confirm(`Usunąć rysunek „${drawingTitle}”?`)) return;
+    if (!drawing) return;
     const committed = commitCurrentDrawing(current);
     const targetProject = committed.projects.find((item) => item.id === project.id)!;
     const remaining = targetProject.drawings.filter((item) => item.id !== drawing.id);
@@ -358,6 +393,14 @@ function App() {
     if (project.id === current.activeProjectId && drawing.id === project.activeDrawingId) {
       startDrawing(remaining.find((item) => item.id === activeDrawingId)!.document);
     }
+  }
+
+  function updateRenameProjectName(name: string) {
+    setWorkspaceDialog((current) => current?.kind === "rename-project" ? { ...current, name } : current);
+  }
+
+  function cancelWorkspaceDialog() {
+    setWorkspaceDialog(null);
   }
 
   function updateHistoryStatus() {
@@ -1063,43 +1106,72 @@ function App() {
           {saved ? <Check size={14} /> : <span className="saving-dot" />}
           <span>{saved ? "Zapisano lokalnie" : "Zapisywanie…"}</span>
         </div>
-        <div className="topbar-actions">
-          <button className="export-button" type="button" onClick={() => downloadSvg(document)}>
-            <ArrowDownToLine size={16} />
-            <span>Eksportuj SVG</span>
-          </button>
-        </div>
       </header>
 
       <div className="workspace">
-        <aside className="tool-rail" aria-label="Narzędzia">
+        <aside className="tool-rail" aria-label="Menu narzędzi">
           <div className="rail-group">
             <button className={`rail-button${showProjectExplorer ? " active" : ""}`} type="button" aria-label="Otwórz eksplorator projektów" title="Projekty i rysunki" aria-expanded={showProjectExplorer} onClick={() => setShowProjectExplorer((open) => !open)}>
               <FolderOpen size={18} />
             </button>
-            <button className={`rail-button${toolMode === "select" ? " active" : ""}`} type="button" aria-label="Zaznaczanie" title="Zaznaczanie" onClick={() => setToolMode("select")}>
+          </div>
+          <div className="rail-divider" />
+          <div className="rail-group">
+            <button className={`rail-button${toolMode === "select" ? " active" : ""}`} type="button" aria-label="Zaznaczanie" title="Zaznaczanie" aria-pressed={toolMode === "select"} onClick={() => setToolMode("select")}>
               <MousePointer2 size={19} />
             </button>
-            <button className={`rail-button${toolMode === "pan" ? " active" : ""}`} type="button" aria-label="Przesuwanie płótna" title="Przesuwanie płótna" onClick={() => setToolMode("pan")}>
+            <button className={`rail-button${toolMode === "pan" ? " active" : ""}`} type="button" aria-label="Przesuwanie płótna" title="Przesuwanie płótna" aria-pressed={toolMode === "pan"} onClick={() => setToolMode("pan")}>
               <Hand size={18} />
             </button>
-            <button className={`rail-button${toolMode === "freehand" ? " active" : ""}`} type="button" aria-label="Rysowanie odręczne" title="Rysowanie krzywych Béziera" onClick={() => { setToolMode("freehand"); setConnectMode(false); }}>
+            <button className={`rail-button${toolMode === "freehand" ? " active" : ""}`} type="button" aria-label="Rysowanie odręczne" title="Rysowanie krzywych Béziera" aria-pressed={toolMode === "freehand"} onClick={() => { setToolMode("freehand"); setConnectMode(false); }}>
               <Pencil size={18} />
             </button>
-            <button className="rail-button" type="button" aria-label="Dodaj kształt" title="Dodaj kształt" onClick={() => addNode()}>
+            <button className={`rail-button${showShapeLibrary ? " active" : ""}`} type="button" aria-label="Otwórz bibliotekę kształtów" title="Biblioteka kształtów i symboli" aria-expanded={showShapeLibrary} onClick={() => setShowShapeLibrary((current) => { if (!current) { setShowCanvasSettings(false); setShowOutline(false); } return !current; })}>
+              <Shapes size={18} />
+            </button>
+            <button className="rail-button" type="button" aria-label="Dodaj element" title="Dodaj element" onClick={() => addNode()}>
               <Plus size={20} />
             </button>
             <button
               className={`rail-button${connectMode ? " active" : ""}`}
               type="button"
-              aria-label="Połącz elementy"
-              title="Połącz elementy"
+              aria-label={connectMode ? "Zakończ łączenie elementów" : "Połącz elementy"}
+              title={connectMode ? (connectSourceId ? "Wybierz drugi element · kliknij, aby zakończyć" : "Wybierz pierwszy element · kliknij, aby zakończyć") : "Połącz elementy"}
+              aria-pressed={connectMode}
               onClick={() => {
                 setConnectMode((current) => !current);
                 setConnectSourceId(null);
               }}
             >
               <Spline size={19} />
+            </button>
+            <button className="rail-button" type="button" aria-label="Wstaw obraz" title="Wstaw obraz z pliku" onClick={() => imageInputRef.current?.click()}>
+              <ImagePlus size={17} />
+            </button>
+            <input ref={imageInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={handleImageFile} />
+          </div>
+          <div className="rail-divider" />
+          <div className="rail-group">
+            <button className={`rail-button${showOutline ? " active" : ""}`} type="button" aria-label="Otwórz konspekt mapy" title="Konspekt i układy mapy myśli" aria-expanded={showOutline} onClick={() => setShowOutline((current) => { if (!current) { setShowShapeLibrary(false); setShowCanvasSettings(false); } return !current; })}>
+              <Layers size={17} />
+            </button>
+            <button className={`rail-button${showCanvasSettings ? " active" : ""}`} type="button" aria-label="Ustawienia widoku" title="Siatka, linijki, prowadnice i zapisane widoki" aria-expanded={showCanvasSettings} onClick={() => setShowCanvasSettings((current) => { if (!current) { setShowShapeLibrary(false); setShowOutline(false); } return !current; })}>
+              <SlidersHorizontal size={17} />
+            </button>
+            <button className="rail-button" type="button" aria-label="Dopasuj cały diagram do widoku" title="Dopasuj cały diagram do widoku" onClick={fitDiagram}>
+              <Maximize size={16} />
+            </button>
+          </div>
+          <div className="rail-divider" />
+          <div className="rail-group">
+            <button className="rail-button" type="button" aria-label="Cofnij" title="Cofnij · Ctrl/Cmd+Z" disabled={!historyStatus.undo} onClick={undo}>
+              <Undo2 size={17} />
+            </button>
+            <button className="rail-button" type="button" aria-label="Ponów" title="Ponów · Ctrl/Cmd+Shift+Z" disabled={!historyStatus.redo} onClick={redo}>
+              <Redo2 size={17} />
+            </button>
+            <button className="rail-button rail-export" type="button" aria-label="Eksportuj diagram jako SVG" title="Eksportuj SVG" onClick={() => downloadSvg(document)}>
+              <ArrowDownToLine size={18} />
             </button>
           </div>
         </aside>
@@ -1112,9 +1184,9 @@ function App() {
           onOpenDrawing={openProjectDrawing}
           onCreateProject={createProject}
           onCreateDrawing={createDrawing}
-          onRenameProject={renameProject}
-          onDeleteProject={deleteProject}
-          onDeleteDrawing={deleteDrawing}
+          onRenameProject={requestRenameProject}
+          onDeleteProject={requestDeleteProject}
+          onDeleteDrawing={requestDeleteDrawing}
           onClose={() => setShowProjectExplorer(false)}
         />}
 
@@ -1133,67 +1205,6 @@ function App() {
         )}
 
         <main className="editor-area">
-          <div className="editor-toolbar">
-            <div className="toolbar-context">
-              <span className="context-icon"><Shapes size={16} /></span>
-              <span>{connectMode ? "Łączenie elementów" : "Edytor diagramów"}</span>
-              {connectMode && <span className="mode-hint">{connectSourceId ? "Wybierz drugi element" : "Wybierz pierwszy element"}</span>}
-            </div>
-            <div className="toolbar-actions">
-              <button className={`toolbar-button${showOutline ? " selected" : ""}`} type="button" aria-label="Otwórz konspekt mapy" title="Konspekt i układy mapy myśli" aria-expanded={showOutline} onClick={() => setShowOutline((current) => { if (!current) { setShowShapeLibrary(false); setShowCanvasSettings(false); } return !current; })}>
-                <Layers size={16} />
-                <span>Konspekt</span>
-              </button>
-              <button className={`toolbar-button${showShapeLibrary ? " selected" : ""}`} type="button" aria-label="Otwórz bibliotekę kształtów" title="Biblioteka kształtów i symboli" aria-expanded={showShapeLibrary} onClick={() => setShowShapeLibrary((current) => { if (!current) { setShowCanvasSettings(false); setShowOutline(false); } return !current; })}>
-                <Shapes size={16} />
-                <span>Kształty</span>
-              </button>
-              <button className="toolbar-button" type="button" aria-label="Dodaj element" title="Dodaj element" onClick={() => addNode()}>
-                <Plus size={16} />
-                <span>Element</span>
-              </button>
-              <button className="toolbar-button history-button" type="button" aria-label="Cofnij" title="Cofnij (Ctrl/Cmd+Z)" disabled={!historyStatus.undo} onClick={undo}>
-                <Undo2 size={15} />
-              </button>
-              <button className="toolbar-button history-button" type="button" aria-label="Ponów" title="Ponów (Ctrl/Cmd+Shift+Z)" disabled={!historyStatus.redo} onClick={redo}>
-                <Redo2 size={15} />
-              </button>
-              <button className="toolbar-button" type="button" aria-label="Wstaw obraz" title="Wstaw obraz z pliku" onClick={() => imageInputRef.current?.click()}>
-                <ImagePlus size={15} />
-                <span>Obraz</span>
-              </button>
-              <input ref={imageInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={handleImageFile} />
-              <button
-                className={`toolbar-button${connectMode ? " selected" : ""}`}
-                type="button"
-                aria-label="Połącz elementy"
-                title="Połącz elementy"
-                onClick={() => {
-                  setConnectMode((current) => !current);
-                  setConnectSourceId(null);
-                }}
-              >
-                <Spline size={16} />
-                <span>Połączenie</span>
-              </button>
-              <button className="toolbar-button" type="button" aria-label="Dopasuj cały diagram do widoku" onClick={fitDiagram} title="Dopasuj cały diagram do widoku">
-                <Maximize size={15} />
-                <span>Dopasuj</span>
-              </button>
-              <button
-                className={`toolbar-button${showCanvasSettings ? " selected" : ""}`}
-                type="button"
-                aria-label="Ustawienia widoku"
-                title="Ustawienia widoku"
-                aria-expanded={showCanvasSettings}
-                onClick={() => setShowCanvasSettings((current) => { if (!current) { setShowShapeLibrary(false); setShowOutline(false); } return !current; })}
-              >
-                <SlidersHorizontal size={15} />
-                <span>Widok</span>
-              </button>
-            </div>
-          </div>
-
           {selectedNodeIds.length > 1 && (
             <div className="selection-toolbar" role="toolbar" aria-label="Narzędzia zaznaczania i układania">
               <span className="selection-toolbar-count">{selectedNodeIds.length} zazn.</span>
@@ -1309,8 +1320,61 @@ function App() {
           </section>
         </main>
 
-
       </div>
+      {workspaceDialog && <div
+        className="workspace-dialog-overlay"
+        role="presentation"
+        onMouseDown={(event) => { if (event.target === event.currentTarget) cancelWorkspaceDialog(); }}
+      >
+        <section
+          className="workspace-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workspace-dialog-title"
+          aria-describedby="workspace-dialog-description"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              cancelWorkspaceDialog();
+            }
+          }}
+        >
+          <div className={`workspace-dialog-icon${workspaceDialog.kind !== "rename-project" ? " is-danger" : ""}`}>
+            {workspaceDialog.kind === "rename-project" ? <PencilLine size={19} /> : <Trash2 size={19} />}
+          </div>
+          <h2 id="workspace-dialog-title">
+            {workspaceDialog.kind === "rename-project" ? "Zmień nazwę projektu" : workspaceDialog.kind === "delete-project" ? "Usuń projekt" : "Usuń rysunek"}
+          </h2>
+          {workspaceDialog.kind === "rename-project" ? <>
+            <p id="workspace-dialog-description">Wpisz nową nazwę folderu projektu.</p>
+            <div className="workspace-dialog-field">
+              <label htmlFor="workspace-project-name">Nazwa projektu</label>
+              <input
+                id="workspace-project-name"
+                autoFocus
+                maxLength={80}
+                value={workspaceDialog.name}
+                onChange={(event) => updateRenameProjectName(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter" && workspaceDialog.name.trim()) confirmWorkspaceDialog(); }}
+              />
+            </div>
+          </> : <p id="workspace-dialog-description">
+            {workspaceDialog.kind === "delete-project"
+              ? <>Projekt „{workspaceDialog.name}” wraz z {workspaceDialog.drawingCount} {workspaceDialog.drawingCount === 1 ? "rysunkiem" : "rysunkami"} zostanie trwale usunięty.</>
+              : <>Rysunek „{workspaceDialog.name}” zostanie trwale usunięty.</>}
+            <span>Tej czynności nie można cofnąć.</span>
+          </p>}
+          <div className="workspace-dialog-actions">
+            <button className="workspace-dialog-cancel" type="button" autoFocus={workspaceDialog.kind !== "rename-project"} onClick={cancelWorkspaceDialog}>Anuluj</button>
+            <button
+              className={`workspace-dialog-confirm${workspaceDialog.kind === "rename-project" ? "" : " is-danger"}`}
+              type="button"
+              disabled={workspaceDialog.kind === "rename-project" && !workspaceDialog.name.trim()}
+              onClick={confirmWorkspaceDialog}
+            >{workspaceDialog.kind === "rename-project" ? "Zapisz nazwę" : "Usuń"}</button>
+          </div>
+        </section>
+      </div>}
     </div>
   );
 }

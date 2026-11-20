@@ -48,6 +48,7 @@ select:focus-visible {
 }
 
 .app-shell {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -164,16 +165,8 @@ select:focus-visible {
   to { opacity: 0.45; }
 }
 
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
 .icon-button,
-.export-button,
 .rail-button,
-.toolbar-button,
 .canvas-zoom button {
   display: inline-flex;
   align-items: center;
@@ -200,22 +193,6 @@ select:focus-visible {
   opacity: 0.4;
 }
 
-.export-button {
-  gap: 8px;
-  height: 36px;
-  padding: 0 13px;
-  border-radius: 9px;
-  background: var(--purple);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  box-shadow: 0 2px 5px #7965e82b;
-}
-
-.export-button:hover {
-  background: var(--purple-dark);
-}
-
 .workspace {
   display: flex;
   flex: 1;
@@ -228,16 +205,30 @@ select:focus-visible {
   flex: 0 0 62px;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 17px 9px;
   border-right: 1px solid var(--line);
   background: linear-gradient(180deg, #fff 0%, #fcfcff 100%);
+  scrollbar-width: none;
 }
+
+.tool-rail::-webkit-scrollbar { display: none; }
 
 .rail-group {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
+}
+
+.rail-divider {
+  width: 25px;
+  height: 1px;
+  flex: 0 0 1px;
+  background: #e9e8f0;
 }
 
 .rail-button {
@@ -259,6 +250,14 @@ select:focus-visible {
   color: var(--purple-dark);
   box-shadow: inset 0 0 0 1px #e7e1ff, 0 2px 6px #7965e814;
 }
+
+.rail-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.rail-export { background: #f5f2ff; color: var(--purple-dark); }
+.rail-export:hover:not(:disabled) { background: #ece7ff; color: #4f3cb3; }
 
 .editor-area {
   display: flex;
@@ -378,94 +377,82 @@ select:focus-visible {
 .project-explorer-delete-file { opacity: 0.65; }
 .project-explorer-footer { flex: 0 0 auto; padding: 11px 14px; border-top: 1px solid #efedf5; color: #9a98a9; font-size: 9px; }
 
-.editor-toolbar {
-  z-index: 1;
-  display: flex;
-  flex: 0 0 56px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  height: 56px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--line);
-  background: #fff;
-  box-shadow: 0 2px 8px #25234108;
-}
-
-.toolbar-context,
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-}
-
-.toolbar-context {
-  min-width: 0;
-  gap: 9px;
-  color: #55546a;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.context-icon {
+.workspace-dialog-overlay {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
   display: grid;
-  width: 27px;
-  height: 27px;
   place-items: center;
-  border: 1px solid #e8e4fb;
-  border-radius: 8px;
-  background: #f5f3ff;
-  color: var(--purple-dark);
+  padding: 18px;
+  background: #29263b65;
+  backdrop-filter: blur(2px);
 }
 
-.mode-hint {
-  padding-left: 10px;
-  border-left: 1px solid var(--line);
-  color: var(--purple-dark);
-  font-size: 11px;
-  font-weight: 500;
+.workspace-dialog {
+  width: min(410px, 100%);
+  padding: 23px;
+  border: 1px solid #e8e5f0;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 20px 60px #211f3845;
+  animation: workspace-dialog-enter 130ms ease-out;
 }
 
-.toolbar-actions {
-  gap: 5px;
+@keyframes workspace-dialog-enter {
+  from { opacity: 0; transform: translateY(5px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-.toolbar-button {
-  gap: 7px;
-  min-height: 32px;
-  padding: 0 9px;
-  border-radius: 8px;
-  background: transparent;
-  color: #6e6d82;
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
-}
-
-.toolbar-button:hover:not(:disabled) {
-  background: #f5f4fa;
-  color: var(--ink);
-}
-
-.toolbar-button.selected {
-  border: 1px solid #e6e0ff;
+.workspace-dialog-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 13px;
+  place-items: center;
+  border-radius: 11px;
   background: #f0edff;
   color: var(--purple-dark);
 }
 
-.toolbar-button:disabled {
-  cursor: default;
-  opacity: 0.38;
+.workspace-dialog-icon.is-danger { background: #fff0f0; color: #c54654; }
+.workspace-dialog h2 { margin: 0 0 8px; color: #302f43; font-size: 16px; font-weight: 700; }
+.workspace-dialog p { margin: 0 0 19px; color: #77758b; font-size: 11px; line-height: 1.6; }
+.workspace-dialog p span { display: block; margin-top: 4px; color: #a09eac; font-size: 10px; }
+
+.workspace-dialog-field { display: flex; flex-direction: column; gap: 6px; margin: 15px 0 20px; }
+.workspace-dialog-field label { color: #77758b; font-size: 10px; font-weight: 650; }
+.workspace-dialog-field input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #e4e2ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #343247;
+  font-size: 12px;
 }
+.workspace-dialog-field input:focus { border-color: #a99be8; outline: 3px solid #d8d0ff; }
+
+.workspace-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.workspace-dialog-actions button {
+  min-width: 76px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #e5e3ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #69677d;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.workspace-dialog-actions .workspace-dialog-confirm { border-color: #705bd9; background: #7965e8; color: #fff; }
+.workspace-dialog-actions .workspace-dialog-confirm.is-danger { border-color: #c54654; background: #ce5662; }
+.workspace-dialog-actions button:hover:not(:disabled) { filter: brightness(0.97); }
+.workspace-dialog-actions button:disabled { cursor: default; opacity: 0.45; }
 
 .hidden-file-input {
   display: none;
-}
-
-.history-button {
-  width: 30px;
-  padding: 0 !important;
 }
 
 .selection-toolbar {
@@ -598,7 +585,7 @@ select:focus-visible {
   width: min(340px, calc(100% - 64px));
   max-height: calc(100% - 64px);
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid #e8e7ef;
   border-radius: 13px;
   background: #fff;
@@ -607,6 +594,7 @@ select:focus-visible {
 
 .shape-library-panel > header {
   display: flex;
+  flex: 0 0 auto;
   min-height: 62px;
   align-items: center;
   justify-content: space-between;
@@ -622,9 +610,14 @@ select:focus-visible {
 
 .shape-library-grid {
   display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
   gap: 6px;
   padding: 11px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .shape-library-item {
@@ -692,6 +685,7 @@ select:focus-visible {
 
 .shape-library-panel > footer {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   gap: 7px;
   padding: 9px 13px 12px;
@@ -1761,36 +1755,9 @@ kbd {
     padding: 13px;
   }
 
-  .editor-toolbar {
-    padding: 0 12px;
-  }
 }
 
 @media (max-width: 850px) {
-  .editor-toolbar {
-    gap: 8px;
-  }
-
-  .toolbar-context > span:not(.context-icon):not(.mode-hint) {
-    display: none;
-  }
-
-  .toolbar-actions {
-    min-width: 0;
-    flex: 1;
-    justify-content: flex-start;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .toolbar-actions::-webkit-scrollbar {
-    display: none;
-  }
-
-  .toolbar-actions .toolbar-button {
-    flex: 0 0 auto;
-  }
-
   .inspector {
     position: absolute;
     right: 12px;
@@ -1824,8 +1791,7 @@ kbd {
 
   .brand > span:last-child,
   .topbar-divider,
-  .save-status,
-  .export-button span {
+  .save-status {
     display: none;
   }
 
@@ -1833,14 +1799,10 @@ kbd {
     width: min(38vw, 180px);
   }
 
-  .export-button {
-    width: 36px;
-    padding: 0;
-  }
-
   .tool-rail {
     flex-basis: 50px;
-    padding: 12px 5px;
+    gap: 8px;
+    padding: 10px 5px;
   }
 
   .project-explorer { left: 50px; width: min(320px, calc(100vw - 50px)); }
@@ -1848,20 +1810,6 @@ kbd {
   .rail-button {
     width: 38px;
     height: 38px;
-  }
-
-  .editor-toolbar {
-    flex-basis: 50px;
-    height: 50px;
-  }
-
-  .toolbar-context > span:not(.context-icon):not(.mode-hint) {
-    display: none;
-  }
-
-  .toolbar-button {
-    min-height: 30px;
-    padding: 0 7px;
   }
 
   .inspector {
@@ -1920,23 +1868,6 @@ kbd {
     left: 19px;
   }
 
-  .mode-hint {
-    display: none;
-  }
-
-  .toolbar-actions {
-    gap: 2px;
-  }
-
-  .toolbar-actions .toolbar-button {
-    width: 34px;
-    padding: 0;
-  }
-
-  .toolbar-actions .toolbar-button span {
-    display: none;
-  }
-
   .canvas-settings-panel {
     top: 20px;
     right: 20px;
@@ -1992,9 +1923,15 @@ kbd {
 
 .shape-library-categories {
   display: flex;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  flex: 0 0 auto;
   gap: 5px;
   overflow-x: auto;
   padding: 9px 11px 2px;
+  border-bottom: 1px solid #f0eff5;
+  background: #fff;
   scrollbar-width: none;
 }
 
