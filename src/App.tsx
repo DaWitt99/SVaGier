@@ -2,9 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowDownToLine,
   Check,
-  FilePlus2,
-  Folder,
-  FolderPlus,
+  FolderOpen,
   Hand,
   Pencil,
   ImagePlus,
@@ -16,7 +14,6 @@ import {
   Maximize,
   MousePointer2,
   Plus,
-  PencilLine,
   Shapes,
   Spline,
   SlidersHorizontal,
@@ -26,6 +23,7 @@ import DiagramCanvas from "./components/DiagramCanvas";
 import CanvasSettingsPanel from "./components/CanvasSettingsPanel";
 import InspectorPanel from "./components/InspectorPanel";
 import OutlinePanel from "./components/OutlinePanel";
+import ProjectExplorerPanel from "./components/ProjectExplorerPanel";
 import ShapeLibraryPanel from "./components/ShapeLibraryPanel";
 import { downloadSvg } from "./exportSvg";
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./components/DiagramCanvas";
@@ -155,9 +153,10 @@ function App() {
   const workspaceRef = useRef(workspace);
   const [document, setDocument] = useState(() => activeDrawing(workspace).document);
   const documentRef = useRef(document);
-  const currentProject = workspace.projects.find((project) => project.id === workspace.activeProjectId) ?? workspace.projects[0];
-  const currentDrawingId = currentProject.activeDrawingId;
-  const visibleProjectDrawings = currentProject.drawings.map((drawing) => drawing.id === currentDrawingId ? { ...drawing, document } : drawing);
+  const visibleProjects = workspace.projects.map((project) => project.id !== workspace.activeProjectId ? project : {
+    ...project,
+    drawings: project.drawings.map((drawing) => drawing.id === project.activeDrawingId ? { ...drawing, document } : drawing),
+  });
   const historyRef = useRef<{ past: DiagramDocument[]; future: DiagramDocument[] }>({ past: [], future: [] });
   const historyActionRef = useRef<DiagramDocument | null>(null);
   const [historyStatus, setHistoryStatus] = useState({ undo: 0, redo: 0 });
@@ -166,6 +165,7 @@ function App() {
   const [toolMode, setToolMode] = useState<"select" | "pan" | "freehand">("select");
   const [showShapeLibrary, setShowShapeLibrary] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
+  const [showProjectExplorer, setShowProjectExplorer] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [connectMode, setConnectMode] = useState(false);
@@ -282,9 +282,14 @@ function App() {
     startDrawing(project.drawings[0].document);
   }
 
-  function createDrawing() {
+  function openProject(projectId: string) {
+    const project = workspaceRef.current.projects.find((item) => item.id === projectId);
+    if (project) openProjectDrawing(project.id, project.activeDrawingId);
+  }
+
+  function createDrawing(projectId: string) {
     const current = commitCurrentDrawing(workspaceRef.current);
-    const project = current.projects.find((item) => item.id === current.activeProjectId);
+    const project = current.projects.find((item) => item.id === projectId);
     if (!project) return;
     const names = new Set(project.drawings.map((drawing) => drawing.document.title));
     let index = 1;
@@ -292,6 +297,7 @@ function App() {
     const drawing: ProjectDrawing = { id: `drawing-${crypto.randomUUID()}`, document: createBlankDocument(`Rysunek ${index}`) };
     const next = {
       ...current,
+      activeProjectId: projectId,
       projects: current.projects.map((item) => item.id === project.id ? {
         ...item,
         drawings: [...item.drawings, drawing],
@@ -302,9 +308,9 @@ function App() {
     startDrawing(drawing.document);
   }
 
-  function renameCurrentProject() {
+  function renameProject(projectId: string) {
     const current = workspaceRef.current;
-    const project = current.projects.find((item) => item.id === current.activeProjectId);
+    const project = current.projects.find((item) => item.id === projectId);
     if (!project) return;
     const name = window.prompt("Nazwa projektu", project.name)?.trim();
     if (!name || name === project.name) return;
@@ -314,34 +320,44 @@ function App() {
     }));
   }
 
-  function deleteCurrentProject() {
+  function deleteProject(projectId: string) {
     const current = workspaceRef.current;
     if (current.projects.length <= 1) return;
-    const project = current.projects.find((item) => item.id === current.activeProjectId);
+    const project = current.projects.find((item) => item.id === projectId);
     if (!project || !window.confirm(`Usunąć projekt „${project.name}” wraz ze wszystkimi rysunkami?`)) return;
     const committed = commitCurrentDrawing(current);
     const remaining = committed.projects.filter((item) => item.id !== project.id);
+    if (project.id !== current.activeProjectId) {
+      updateWorkspace(() => ({ ...committed, projects: remaining }));
+      return;
+    }
     const nextProject = remaining[0];
     const drawing = nextProject.drawings.find((item) => item.id === nextProject.activeDrawingId) ?? nextProject.drawings[0];
     updateWorkspace(() => ({ ...committed, projects: remaining, activeProjectId: nextProject.id }));
     startDrawing(drawing.document);
   }
 
-  function deleteCurrentDrawing() {
+  function deleteDrawing(projectId: string, drawingId: string) {
     const current = workspaceRef.current;
-    const project = current.projects.find((item) => item.id === current.activeProjectId);
+    const project = current.projects.find((item) => item.id === projectId);
     if (!project || project.drawings.length <= 1) return;
-    const drawing = project.drawings.find((item) => item.id === project.activeDrawingId);
-    if (!drawing || !window.confirm(`Usunąć rysunek „${documentRef.current.title}”?`)) return;
+    const drawing = project.drawings.find((item) => item.id === drawingId);
+    const drawingTitle = project.id === current.activeProjectId && drawingId === project.activeDrawingId
+      ? documentRef.current.title
+      : drawing?.document.title;
+    if (!drawing || !window.confirm(`Usunąć rysunek „${drawingTitle}”?`)) return;
     const committed = commitCurrentDrawing(current);
-    const remaining = committed.projects.find((item) => item.id === project.id)!.drawings.filter((item) => item.id !== drawing.id);
-    const nextDrawing = remaining[0];
+    const targetProject = committed.projects.find((item) => item.id === project.id)!;
+    const remaining = targetProject.drawings.filter((item) => item.id !== drawing.id);
+    const activeDrawingId = targetProject.activeDrawingId === drawing.id ? remaining[0].id : targetProject.activeDrawingId;
     const next = {
       ...committed,
-      projects: committed.projects.map((item) => item.id === project.id ? { ...item, drawings: remaining, activeDrawingId: nextDrawing.id } : item),
+      projects: committed.projects.map((item) => item.id === project.id ? { ...item, drawings: remaining, activeDrawingId } : item),
     };
     updateWorkspace(() => next);
-    startDrawing(nextDrawing.document);
+    if (project.id === current.activeProjectId && drawing.id === project.activeDrawingId) {
+      startDrawing(remaining.find((item) => item.id === activeDrawingId)!.document);
+    }
   }
 
   function updateHistoryStatus() {
@@ -1058,6 +1074,9 @@ function App() {
       <div className="workspace">
         <aside className="tool-rail" aria-label="Narzędzia">
           <div className="rail-group">
+            <button className={`rail-button${showProjectExplorer ? " active" : ""}`} type="button" aria-label="Otwórz eksplorator projektów" title="Projekty i rysunki" aria-expanded={showProjectExplorer} onClick={() => setShowProjectExplorer((open) => !open)}>
+              <FolderOpen size={18} />
+            </button>
             <button className={`rail-button${toolMode === "select" ? " active" : ""}`} type="button" aria-label="Zaznaczanie" title="Zaznaczanie" onClick={() => setToolMode("select")}>
               <MousePointer2 size={19} />
             </button>
@@ -1085,6 +1104,20 @@ function App() {
           </div>
         </aside>
 
+        {showProjectExplorer && <ProjectExplorerPanel
+          projects={visibleProjects}
+          activeProjectId={workspace.activeProjectId}
+          activeDrawingId={workspace.projects.find((project) => project.id === workspace.activeProjectId)?.activeDrawingId ?? ""}
+          onOpenProject={openProject}
+          onOpenDrawing={openProjectDrawing}
+          onCreateProject={createProject}
+          onCreateDrawing={createDrawing}
+          onRenameProject={renameProject}
+          onDeleteProject={deleteProject}
+          onDeleteDrawing={deleteDrawing}
+          onClose={() => setShowProjectExplorer(false)}
+        />}
+
         {activeInspectorSection && (selectedNode || selectedEdge) && (
           <InspectorPanel
             section={activeInspectorSection}
@@ -1100,38 +1133,6 @@ function App() {
         )}
 
         <main className="editor-area">
-          <nav className="project-workspace-bar" aria-label="Projekty i rysunki">
-            <div className="project-switcher">
-              <Folder size={15} aria-hidden="true" />
-              <select
-                aria-label="Aktywny projekt"
-                value={workspace.activeProjectId}
-                onChange={(event) => {
-                  const project = workspace.projects.find((item) => item.id === event.target.value);
-                  if (project) openProjectDrawing(project.id, project.activeDrawingId);
-                }}
-              >
-                {workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
-              <button type="button" aria-label="Nowy projekt" title="Nowy projekt" onClick={createProject}><FolderPlus size={15} /></button>
-              <button type="button" aria-label="Zmień nazwę projektu" title="Zmień nazwę projektu" onClick={renameCurrentProject}><PencilLine size={14} /></button>
-              <button type="button" className="project-delete-button" aria-label="Usuń projekt" title="Usuń projekt" disabled={workspace.projects.length <= 1} onClick={deleteCurrentProject}><Trash2 size={14} /></button>
-            </div>
-            <span className="project-workspace-divider" />
-            <div className="drawing-tabs" role="tablist" aria-label={`Rysunki projektu ${currentProject.name}`}>
-              {visibleProjectDrawings.map((drawing) => <button
-                key={drawing.id}
-                type="button"
-                role="tab"
-                aria-selected={drawing.id === currentDrawingId}
-                className={drawing.id === currentDrawingId ? "active" : ""}
-                title={drawing.document.title}
-                onClick={() => openProjectDrawing(currentProject.id, drawing.id)}
-              >{drawing.document.title || "Bez nazwy"}</button>)}
-            </div>
-            <button className="document-navigation-action" type="button" aria-label="Nowy rysunek" title="Nowy rysunek" onClick={createDrawing}><FilePlus2 size={15} /><span>Rysunek</span></button>
-            <button className="document-navigation-action document-delete-button" type="button" aria-label="Usuń rysunek" title="Usuń rysunek" disabled={currentProject.drawings.length <= 1} onClick={deleteCurrentDrawing}><Trash2 size={14} /></button>
-          </nav>
           <div className="editor-toolbar">
             <div className="toolbar-context">
               <span className="context-icon"><Shapes size={16} /></span>
