@@ -1081,6 +1081,7 @@ select:focus-visible {
 }
 
 .diagram-edge {
+  fill: none;
   stroke: #c6c3d9;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
