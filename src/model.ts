@@ -106,6 +106,23 @@ export interface DiagramDocument {
   editor: EditorSettings;
 }
 
+export interface ProjectDrawing {
+  id: string;
+  document: DiagramDocument;
+}
+
+export interface DiagramProject {
+  id: string;
+  name: string;
+  drawings: ProjectDrawing[];
+  activeDrawingId: string;
+}
+
+export interface ProjectWorkspace {
+  projects: DiagramProject[];
+  activeProjectId: string;
+}
+
 export const defaultEditorSettings: EditorSettings = {
   gridStyle: "dots",
   gridSpacingPx: 24,

@@ -267,6 +267,116 @@ select:focus-visible {
   min-width: 0;
 }
 
+.project-workspace-bar {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 42px;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.project-switcher {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: #817f96;
+}
+
+.project-switcher select {
+  width: 150px;
+  min-width: 60px;
+  height: 29px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #4d4b63;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.project-switcher select:hover,
+.project-switcher select:focus { border-color: var(--line); background: #fbfbfe; }
+
+.project-switcher button,
+.document-navigation-action {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #89879b;
+  cursor: pointer;
+}
+
+.project-switcher button:hover:not(:disabled),
+.document-navigation-action:hover:not(:disabled) { background: #f1effa; color: var(--purple-dark); }
+.project-switcher .project-delete-button:hover:not(:disabled),
+.document-navigation-action.document-delete-button:hover:not(:disabled) { background: #fff0f0; color: #c54654; }
+.project-switcher button:disabled,
+.document-navigation-action:disabled { cursor: default; opacity: 0.35; }
+
+.project-workspace-divider {
+  width: 1px;
+  height: 22px;
+  flex: 0 0 1px;
+  background: var(--line);
+}
+
+.drawing-tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: stretch;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.drawing-tabs::-webkit-scrollbar { display: none; }
+
+.drawing-tabs button {
+  position: relative;
+  min-width: 72px;
+  max-width: 180px;
+  flex: 0 1 auto;
+  overflow: hidden;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: #858398;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.drawing-tabs button:hover { background: #f7f6fb; color: #55536c; }
+.drawing-tabs button.active { background: #f3f0ff; color: var(--purple-dark); font-weight: 650; }
+.drawing-tabs button.active::after { position: absolute; right: 8px; bottom: 0; left: 8px; height: 2px; border-radius: 2px 2px 0 0; background: var(--purple); content: ""; }
+
+.document-navigation-action {
+  width: auto;
+  min-width: 28px;
+  flex-basis: auto;
+  padding: 0 7px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .editor-toolbar {
   z-index: 1;
   display: flex;
@@ -1742,6 +1852,10 @@ kbd {
     height: 50px;
   }
 
+  .project-workspace-bar { gap: 5px; padding: 0 8px; }
+  .project-switcher { gap: 2px; }
+  .project-switcher select { width: 118px; }
+
   .toolbar-context > span:not(.context-icon):not(.mode-hint) {
     display: none;
   }
@@ -1770,6 +1884,15 @@ kbd {
 }
 
 @media (max-width: 620px) {
+  .project-workspace-bar { flex-basis: 40px; gap: 3px; padding: 0 5px; }
+  .project-switcher > svg { display: none; }
+  .project-switcher select { width: 92px; padding: 0 3px; font-size: 10px; }
+  .project-switcher button,
+  .document-navigation-action { width: 24px; height: 26px; flex-basis: 24px; }
+  .document-navigation-action { min-width: 24px; padding: 0; }
+  .document-navigation-action span { display: none; }
+  .drawing-tabs button { min-width: 58px; padding: 0 7px; }
+
   .inspector {
     position: absolute;
     right: 10px;
