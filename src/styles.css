@@ -1170,6 +1170,22 @@ select:focus-visible {
   vector-effect: non-scaling-stroke;
 }
 
+.freehand-preview {
+  stroke: #5e50b4;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.freehand-preview-point {
+  fill: #5e50b4;
+  opacity: 0.9;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
 .node-shape[style] { vector-effect: non-scaling-stroke; }
 .database-rim { fill: none; stroke-width: 1.2; }
 .actor-symbol { fill: none; stroke-width: 3; stroke-linecap: round; }

@@ -829,7 +829,7 @@ export default function DiagramCanvas({
     event.currentTarget.setPointerCapture(event.pointerId);
     if (event.pointerType === "touch") pointerPointsRef.current.set(event.pointerId, point);
     dragRef.current = { type: "freehand", pointerId: event.pointerId, points: [point] };
-    setFreehandPreview([]);
+    setFreehandPreview(smoothCurve([worldPoint(point)]));
   }
 
   function handleCanvasPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
@@ -1253,7 +1253,9 @@ export default function DiagramCanvas({
             return from && to ? <DiagramEdgeView key={edge.id} edge={edge} from={from} to={to} nodes={nodes} selected={selectedEdgeId === edge.id} /> : null;
           })}
           {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeIds.includes(node.id)} connectSource={node.id === connectSourceId} showConnectHandles={connectMode} hasChildren={nodesWithChildren.has(node.id)} />)}
-          {freehandPreview.length > 1 && <path d={bezierPath(freehandPreview)} className="freehand-preview" />}
+          {freehandPreview.length > 1
+            ? <path d={bezierPath(freehandPreview)} className="freehand-preview" />
+            : freehandPreview.length === 1 && <circle cx={freehandPreview[0].x} cy={freehandPreview[0].y} r={2 / camera.zoom} className="freehand-preview-point" />}
           {connectionPreview && <path d={`M ${connectionPreview.start.x} ${connectionPreview.start.y} L ${connectionPreview.end.x} ${connectionPreview.end.y}`} className="connection-preview" />}
         </g>
         <GuideOverlays guides={settings.guides} camera={camera} viewport={viewport} />
