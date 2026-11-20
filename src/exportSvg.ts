@@ -85,6 +85,7 @@ function renderNode(node: DiagramNode): string {
   const titleY = umlClassifier ? node.y + 30 : node.kind === "actor" ? node.y + node.height - 18 : node.kind === "lifeline" ? node.y + 26 : labelBelowSymbol ? node.y + node.height + 17 : center.y - 8;
   const detailY = umlClassifier ? node.y + 70 : node.kind === "actor" ? node.y + node.height - 2 : labelBelowSymbol ? node.y + node.height + 34 : center.y + 18;
   const titleSize = node.fontSize ?? (node.kind === "text" ? 20 : 15);
+  const fontFamily = node.fontFamily === "serif" ? "Georgia, 'Times New Roman', serif" : node.fontFamily === "monospace" ? "'SFMono-Regular', Consolas, monospace" : "Inter, Arial, sans-serif";
   const titleLines = node.title.split("\n");
   const detailLines = node.detail ? node.detail.split("\n") : [];
   const hideCaption = node.kind === "line" || node.kind === "forkJoin" || node.kind === "activation";
@@ -108,7 +109,7 @@ function renderNode(node: DiagramNode): string {
   const rotation = node.rotation ? ` transform="rotate(${node.rotation} ${center.x} ${center.y})"` : "";
   const priorityColor = node.priority === "high" ? "#df6a72" : node.priority === "medium" ? "#e2a843" : node.priority === "low" ? "#6fa8d8" : null;
   const badges = `${priorityColor ? `<circle cx="${node.x + node.width - 12}" cy="${node.y + 12}" r="5" fill="${priorityColor}" stroke="#fff" stroke-width="2"/>` : ""}${node.labels?.length ? `<text x="${center.x}" y="${node.y + node.height - 7}" fill="#88859a" font-size="9" text-anchor="middle">${escapeXml(node.labels.slice(0, 2).join(" · "))}</text>` : ""}`;
-  const group = `<g font-family="Inter, Arial, sans-serif"${rotation}>${shape}${node.kind === "image" || node.kind === "freehand" ? "" : `${title}${detail}`}${badges}</g>`;
+  const group = `<g font-family="${escapeXml(fontFamily)}"${rotation}>${shape}${node.kind === "image" || node.kind === "freehand" ? "" : `${title}${detail}`}${badges}</g>`;
   return node.linkUrl ? `<a href="${escapeXml(node.linkUrl)}" target="_blank">${group}</a>` : group;
 }
 

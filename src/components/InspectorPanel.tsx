@@ -62,6 +62,23 @@ export default function InspectorPanel({
               <textarea id="node-detail" rows={5} value={node.detail} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { detail: event.target.value })} />
             </div>}
             {(node.kind === "class" || node.kind === "interface" || node.kind === "abstractClass") && <p className="inspector-hint">Wpisz atrybuty i metody w osobnych wierszach.</p>}
+            {node.kind !== "line" && node.kind !== "freehand" && node.kind !== "image" && node.kind !== "forkJoin" && node.kind !== "activation" && <div className="inspector-typography">
+              <h3>Typografia</h3>
+              <label className="settings-field">
+                <span>Czcionka</span>
+                <select value={node.fontFamily ?? "sans"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { fontFamily: event.target.value as DiagramNode["fontFamily"] })}>
+                  <option value="sans">Bezszeryfowa</option><option value="serif">Szeryfowa</option><option value="monospace">Monospace</option>
+                </select>
+              </label>
+              <div className="settings-fields-row inspector-typography-row">
+                <label className="field-group"><span>Rozmiar (px)</span><input type="number" min="8" max="96" value={node.fontSize ?? 15} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 8)) })} /></label>
+                <label className="field-group"><span>Wyrównanie</span><select value={node.textAlign ?? "center"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { textAlign: event.target.value as DiagramNode["textAlign"] })}><option value="left">Do lewej</option><option value="center">Do środka</option><option value="right">Do prawej</option></select></label>
+              </div>
+              <div className="text-format-toggles">
+                <label><input type="checkbox" checked={node.fontWeight === "bold"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { fontWeight: event.target.checked ? "bold" : "normal" })} /> Pogrubienie</label>
+                <label><input type="checkbox" checked={node.fontStyle === "italic"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { fontStyle: event.target.checked ? "italic" : "normal" })} /> Kursywa</label>
+              </div>
+            </div>}
           </>}
 
           {section === "style" && <>
@@ -76,20 +93,7 @@ export default function InspectorPanel({
                 <label className="field-group"><span>Wypełnienie</span><input type="color" value={node.fill ?? "#ffffff"} disabled={disabled || node.kind === "text" || node.kind === "initialState" || node.kind === "actor" || node.kind === "requiredInterface"} onChange={(event) => onUpdateNode(node.id, { fill: event.target.value })} /></label>
                 <label className="field-group"><span>Kontur</span><input type="color" value={node.stroke ?? "#d8d8e7"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { stroke: event.target.value })} /></label>
               </div>
-              <div className="settings-fields-row inspector-color-row">
-                <label className="field-group"><span>Kolor tekstu</span><input type="color" value={node.textColor ?? "#302f43"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { textColor: event.target.value })} /></label>
-                <label className="field-group"><span>Rozmiar tekstu</span><input type="number" min="8" max="96" value={node.fontSize ?? 15} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 8)) })} /></label>
-              </div>
-              <label className="settings-field">
-                <span>Wyrównanie tekstu</span>
-                <select value={node.textAlign ?? "center"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { textAlign: event.target.value as DiagramNode["textAlign"] })}>
-                  <option value="left">Do lewej</option><option value="center">Do środka</option><option value="right">Do prawej</option>
-                </select>
-              </label>
-              <div className="text-format-toggles">
-                <label><input type="checkbox" checked={node.fontWeight === "bold"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { fontWeight: event.target.checked ? "bold" : "normal" })} /> Pogrubienie</label>
-                <label><input type="checkbox" checked={node.fontStyle === "italic"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { fontStyle: event.target.checked ? "italic" : "normal" })} /> Kursywa</label>
-              </div>
+              <label className="field-group inspector-color-control"><span>Kolor tekstu</span><input type="color" value={node.textColor ?? "#302f43"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { textColor: event.target.value })} /></label>
             </>}
             {(node.kind === "freehand" || node.kind === "line") && <div className="settings-fields-row inspector-color-row">
               <label className="field-group"><span>Kolor linii</span><input type="color" value={node.stroke ?? "#5e50b4"} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { stroke: event.target.value })} /></label>

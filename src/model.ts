@@ -8,6 +8,7 @@ export type ShapeKind =
 export type InspectorSection = "content" | "style" | "size" | "details" | "link";
 export type MindMapLayout = "manual" | "tree" | "radial" | "horizontal";
 export type NodePriority = "low" | "medium" | "high";
+export type DiagramFontFamily = "sans" | "serif" | "monospace";
 
 export interface CurvePoint {
   x: number;
@@ -39,6 +40,7 @@ export interface DiagramNode {
   stroke?: string;
   strokeWidth?: number;
   textColor?: string;
+  fontFamily?: DiagramFontFamily;
   fontSize?: number;
   fontWeight?: "normal" | "bold";
   fontStyle?: "normal" | "italic";

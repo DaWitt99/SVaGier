@@ -1975,3 +1975,26 @@ kbd {
   .inspector-heading { flex-basis: 62px; }
   .inspector-footer { display: none; }
 }
+
+.inspector-typography {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding-top: 14px;
+  border-top: 1px solid #efeff4;
+}
+
+.inspector-typography h3 {
+  margin: 0;
+  color: #55546a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.inspector-typography-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.inspector-color-control input[type="color"] {
+  height: 34px;
+  padding: 3px;
+  cursor: pointer;
+}

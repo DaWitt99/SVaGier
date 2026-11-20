@@ -161,7 +161,8 @@ const DiagramNodeView = memo(function DiagramNodeView({ node, selected, connectS
   const textNodeLines = [...node.title.split("\n"), ...(node.detail ? node.detail.split("\n") : [])];
   const textAnchor = node.kind === "boundary" || node.kind === "control" || node.kind === "entity" ? "start" : node.textAlign === "left" ? "start" : node.textAlign === "right" ? "end" : "middle";
   const textX = node.kind === "boundary" || node.kind === "control" || node.kind === "entity" ? node.x + 40 : node.textAlign === "left" ? node.x + 12 : node.textAlign === "right" ? node.x + node.width - 12 : node.x + node.width / 2;
-  const textStyle = { fill: node.textColor ?? "#302f43", fontSize: node.fontSize ?? 15, fontWeight: node.fontWeight ?? (node.kind === "text" ? "normal" : "650"), fontStyle: node.fontStyle ?? (node.kind === "abstractClass" ? "italic" : "normal"), textAnchor } as const;
+  const fontFamily = node.fontFamily === "serif" ? "Georgia, 'Times New Roman', serif" : node.fontFamily === "monospace" ? "'SFMono-Regular', Consolas, monospace" : "Inter, ui-sans-serif, system-ui, sans-serif";
+  const textStyle = { fill: node.textColor ?? "#302f43", fontFamily, fontSize: node.fontSize ?? 15, fontWeight: node.fontWeight ?? (node.kind === "text" ? "normal" : "650"), fontStyle: node.fontStyle ?? (node.kind === "abstractClass" ? "italic" : "normal"), textAnchor } as const;
   const ports = [
     ["top", node.x + node.width / 2, node.y], ["right", node.x + node.width, node.y + node.height / 2],
     ["bottom", node.x + node.width / 2, node.y + node.height], ["left", node.x, node.y + node.height / 2],
