@@ -663,11 +663,10 @@ select:focus-visible {
   align-items: center;
   gap: 3px;
   border-radius: 7px;
-  cursor: grab;
 }
 
-.outline-row:active { cursor: grabbing; }
 .outline-row.is-selected { background: #f2efff; }
+.outline-row.is-dragging .outline-node-select { opacity: 0.48; }
 .outline-row.is-drop-child { background: #eeeaff; box-shadow: inset 0 0 0 1px #a89add; }
 .outline-row.is-drop-invalid { background: #fff0f0; box-shadow: inset 0 0 0 1px #e5a6aa; }
 .outline-row.is-drop-before::before,
@@ -702,6 +701,21 @@ select:focus-visible {
 }
 
 .outline-collapse:hover { background: #e9e5fb; color: var(--purple-dark); }
+
+.outline-drag-handle {
+  display: grid;
+  width: 19px;
+  height: 25px;
+  flex: 0 0 19px;
+  place-items: center;
+  border-radius: 5px;
+  color: #aaa8b8;
+  cursor: grab;
+  touch-action: none;
+}
+
+.outline-drag-handle:hover { background: #f1eff8; color: #716b8b; }
+.outline-drag-handle:active { cursor: grabbing; }
 
 .outline-node-select {
   display: flex;

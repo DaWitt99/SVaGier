@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, useState } from "react";
+import { ChevronDown, ChevronRight, GripVertical, X } from "lucide-react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type { DiagramNode, MindMapLayout } from "../model";
 
 interface OutlinePanelProps {
@@ -22,9 +22,19 @@ const layoutOptions: { value: MindMapLayout; label: string; title: string }[] = 
   { value: "horizontal", label: "Poziomo", title: "Układ poziomy" },
 ];
 
+interface PointerDragSession {
+  pointerId: number;
+  sourceId: string;
+  startX: number;
+  startY: number;
+  active: boolean;
+}
+
 export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect, onToggleCollapse, onLayoutChange, onReorder, onMoveAsChild, onClose }: OutlinePanelProps) {
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ nodeId: string; mode: "before" | "child" | "after" | "invalid" } | null>(null);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const pointerDragRef = useRef<PointerDragSession | null>(null);
   const nodeIds = new Set(nodes.map((node) => node.id));
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const children = new Map<string, DiagramNode[]>();
@@ -54,6 +64,68 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
     return "child";
   };
 
+  const findDropTarget = (clientX: number, clientY: number): { node: DiagramNode; element: HTMLElement } | null => {
+    const element = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(".outline-row[data-outline-node-id]");
+    const node = element?.dataset.outlineNodeId ? nodeById.get(element.dataset.outlineNodeId) : undefined;
+    return element && node ? { node, element } : null;
+  };
+
+  const beginPointerDrag = (event: ReactPointerEvent<HTMLSpanElement>, node: DiagramNode) => {
+    if (node.locked || event.button !== 0 || !treeRef.current) return;
+    event.preventDefault();
+    pointerDragRef.current = {
+      pointerId: event.pointerId,
+      sourceId: node.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+    treeRef.current.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const session = pointerDragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (!session.active && Math.hypot(event.clientX - session.startX, event.clientY - session.startY) < 5) return;
+    if (!session.active) {
+      session.active = true;
+      setDraggedNodeId(session.sourceId);
+    }
+    event.preventDefault();
+    const hit = findDropTarget(event.clientX, event.clientY);
+    if (!hit) {
+      setDropTarget((current) => current === null ? current : null);
+      return;
+    }
+    const bounds = hit.element.getBoundingClientRect();
+    const mode = getDropMode(session.sourceId, hit.node, event.clientY, bounds.top, bounds.height);
+    setDropTarget((current) => current?.nodeId === hit.node.id && current.mode === mode ? current : { nodeId: hit.node.id, mode });
+  };
+
+  const finishPointerDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const session = pointerDragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (session.active) {
+      const hit = findDropTarget(event.clientX, event.clientY);
+      if (hit) {
+        const bounds = hit.element.getBoundingClientRect();
+        const mode = getDropMode(session.sourceId, hit.node, event.clientY, bounds.top, bounds.height);
+        if (mode === "child") onMoveAsChild(session.sourceId, hit.node.id);
+        else if (mode === "before" || mode === "after") onReorder(session.sourceId, hit.node.id, mode === "after");
+      }
+    }
+    pointerDragRef.current = null;
+    setDraggedNodeId(null);
+    setDropTarget(null);
+  };
+
+  const cancelPointerDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (pointerDragRef.current?.pointerId !== event.pointerId) return;
+    pointerDragRef.current = null;
+    setDraggedNodeId(null);
+    setDropTarget(null);
+  };
+
   const renderNode = (node: DiagramNode, depth: number): ReactNode => {
     if (visited.has(node.id)) return null;
     visited.add(node.id);
@@ -64,49 +136,19 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
     return (
       <div className="outline-branch" key={node.id}>
         <div
-          className={`outline-row${selected ? " is-selected" : ""}${dropTarget?.nodeId === node.id ? ` is-drop-${dropTarget.mode}` : ""}`}
+          className={`outline-row${selected ? " is-selected" : ""}${draggedNodeId === node.id ? " is-dragging" : ""}${dropTarget?.nodeId === node.id ? ` is-drop-${dropTarget.mode}` : ""}`}
           role="treeitem"
           aria-level={depth + 1}
           aria-expanded={hasChildren ? !node.collapsed : undefined}
           style={{ paddingLeft: 8 + depth * 17 }}
-          draggable={!node.locked}
-          onDragStart={(event) => {
-            setDraggedNodeId(node.id);
-            setDropTarget(null);
-            event.dataTransfer.setData("text/plain", node.id);
-            event.dataTransfer.effectAllowed = "move";
-          }}
-          onDragEnd={() => { setDraggedNodeId(null); setDropTarget(null); }}
-          onDragOver={(event) => {
-            const draggedId = event.dataTransfer.getData("text/plain") || draggedNodeId;
-            if (!draggedId) return;
-            const bounds = event.currentTarget.getBoundingClientRect();
-            const mode = getDropMode(draggedId, node, event.clientY, bounds.top, bounds.height);
-            event.preventDefault();
-            event.dataTransfer.dropEffect = mode === "invalid" ? "none" : "move";
-            setDropTarget((current) => current?.nodeId === node.id && current.mode === mode ? current : { nodeId: node.id, mode });
-          }}
-          onDragLeave={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-            setDropTarget((current) => current?.nodeId === node.id ? null : current);
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            const draggedId = event.dataTransfer.getData("text/plain") || draggedNodeId;
-            if (!draggedId) return;
-            const bounds = event.currentTarget.getBoundingClientRect();
-            const mode = getDropMode(draggedId, node, event.clientY, bounds.top, bounds.height);
-            if (mode === "child") onMoveAsChild(draggedId, node.id);
-            else if (mode === "before" || mode === "after") onReorder(draggedId, node.id, mode === "after");
-            setDraggedNodeId(null);
-            setDropTarget(null);
-          }}
+          data-outline-node-id={node.id}
         >
           {hasChildren ? (
             <button className="outline-collapse" type="button" aria-label={node.collapsed ? "Rozwiń gałąź" : "Zwiń gałąź"} onClick={() => onToggleCollapse(node.id)}>
               {node.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
             </button>
           ) : <span className="outline-collapse-spacer" />}
+          {!node.locked && <span className="outline-drag-handle" aria-hidden="true" title="Przeciągnij, aby zmienić hierarchię" onPointerDown={(event) => beginPointerDrag(event, node)}><GripVertical size={13} /></span>}
           <button className="outline-node-select" type="button" aria-current={selected ? "true" : undefined} onClick={() => onSelect(node.id)}>
             <span className="outline-priority" data-priority={node.priority ?? "none"} />
             <span className="outline-node-title">{node.title || "Bez nazwy"}</span>
@@ -136,11 +178,20 @@ export default function OutlinePanel({ nodes, selectedNodeIds, layout, onSelect,
       <div className="outline-layouts" role="group" aria-label="Automatyczny układ mapy">
         {layoutOptions.map((option) => <button key={option.value} type="button" className={layout === option.value ? "active" : ""} aria-pressed={layout === option.value} title={option.title} onClick={() => onLayoutChange(option.value)}>{option.label}</button>)}
       </div>
-      <div className="outline-tree" role="tree" aria-label="Węzły diagramu">{rows}</div>
+      <div
+        ref={treeRef}
+        className="outline-tree"
+        role="tree"
+        aria-label="Węzły diagramu"
+        onPointerMove={handlePointerMove}
+        onPointerUp={finishPointerDrag}
+        onPointerCancel={cancelPointerDrag}
+        onLostPointerCapture={cancelPointerDrag}
+      >{rows}</div>
       <footer className="outline-panel-footer">
         <span><kbd>Tab</kbd> gałąź</span>
         <span><kbd>Enter</kbd> ten sam poziom</span>
-        <small>Góra/dół zmienia kolejność, środek upuszcza jako dziecko.</small>
+        <small>Uchwyt przeciąga element: góra/dół zmienia kolejność, środek ustawia go jako dziecko.</small>
       </footer>
     </section>
   );
