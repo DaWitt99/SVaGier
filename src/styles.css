@@ -657,6 +657,7 @@ select:focus-visible {
 }
 
 .outline-row {
+  position: relative;
   display: flex;
   min-height: 32px;
   align-items: center;
@@ -667,6 +668,21 @@ select:focus-visible {
 
 .outline-row:active { cursor: grabbing; }
 .outline-row.is-selected { background: #f2efff; }
+.outline-row.is-drop-child { background: #eeeaff; box-shadow: inset 0 0 0 1px #a89add; }
+.outline-row.is-drop-invalid { background: #fff0f0; box-shadow: inset 0 0 0 1px #e5a6aa; }
+.outline-row.is-drop-before::before,
+.outline-row.is-drop-after::after {
+  position: absolute;
+  right: 7px;
+  left: 7px;
+  height: 2px;
+  border-radius: 2px;
+  background: #7967d3;
+  content: "";
+  pointer-events: none;
+}
+.outline-row.is-drop-before::before { top: -2px; }
+.outline-row.is-drop-after::after { bottom: -2px; }
 
 .outline-collapse,
 .outline-collapse-spacer {
@@ -705,6 +721,7 @@ select:focus-visible {
 
 .outline-row.is-selected .outline-node-select { color: #45399c; font-weight: 650; }
 .outline-node-title { min-width: 0; flex: 1; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.outline-drop-hint { flex: 0 0 auto; padding: 2px 5px; border-radius: 5px; background: #ddd5ff; color: #5748ac; font-size: 8px; white-space: nowrap; }
 .outline-priority { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: transparent; }
 .outline-priority[data-priority="low"] { background: #6fa8d8; }
 .outline-priority[data-priority="medium"] { background: #e2a843; }

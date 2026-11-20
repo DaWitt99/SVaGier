@@ -517,6 +517,54 @@ function App() {
     });
   }
 
+  function moveMindMapNodeAsChild(nodeId: string, parentId: string) {
+    let moved = false;
+    updateDocument((current) => {
+      const source = current.nodes.find((node) => node.id === nodeId);
+      const parent = current.nodes.find((node) => node.id === parentId);
+      if (!source || !parent || source.id === parent.id || source.locked || parent.locked) return current;
+
+      let ancestorId: string | undefined = parent.id;
+      const seen = new Set<string>();
+      while (ancestorId && !seen.has(ancestorId)) {
+        if (ancestorId === source.id) return current;
+        seen.add(ancestorId);
+        ancestorId = current.nodes.find((node) => node.id === ancestorId)?.parentId;
+      }
+
+      const destinationSiblings = current.nodes
+        .filter((node) => node.parentId === parent.id && node.id !== source.id)
+        .sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+      const currentDestinationSiblings = current.nodes
+        .filter((node) => node.parentId === parent.id)
+        .sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0));
+      const alreadyLastChild = source.parentId === parent.id
+        && currentDestinationSiblings.at(-1)?.id === source.id;
+      if (alreadyLastChild && !parent.collapsed) return current;
+
+      const siblingOrderById = new Map<string, number>();
+      if (source.parentId !== parent.id) {
+        current.nodes
+          .filter((node) => node.parentId === source.parentId && node.id !== source.id)
+          .sort((a, b) => (a.siblingOrder ?? 0) - (b.siblingOrder ?? 0))
+          .forEach((node, index) => siblingOrderById.set(node.id, index));
+      }
+      [...destinationSiblings, source].forEach((node, index) => siblingOrderById.set(node.id, index));
+
+      const nodes = current.nodes.map((node) => {
+        if (node.id === source.id) return { ...node, parentId: parent.id, siblingOrder: siblingOrderById.get(node.id) };
+        const siblingOrder = siblingOrderById.get(node.id);
+        if (node.id === parent.id) return { ...node, collapsed: false, ...(siblingOrder === undefined ? {} : { siblingOrder }) };
+        return siblingOrder === undefined ? node : { ...node, siblingOrder };
+      });
+      moved = true;
+      return { ...current, nodes: layoutMindMap(nodes, current.editor.mindmapLayout) };
+    });
+    if (!moved) return;
+    setSelectedNodeIds([nodeId]);
+    setSelectedEdgeId(null);
+  }
+
   function addImage(data: string, fileName: string) {
     const id = `image-${crypto.randomUUID()}`;
     const node: DiagramNode = {
@@ -966,6 +1014,7 @@ function App() {
                 onToggleCollapse={toggleBranchCollapsed}
                 onLayoutChange={changeMindMapLayout}
                 onReorder={reorderMindMapSibling}
+                onMoveAsChild={moveMindMapNodeAsChild}
                 onClose={() => setShowOutline(false)}
               />
             )}
