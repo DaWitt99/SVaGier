@@ -9,6 +9,16 @@ export type InspectorSection = "content" | "style" | "size" | "details" | "link"
 export type MindMapLayout = "manual" | "tree" | "radial" | "horizontal";
 export type NodePriority = "low" | "medium" | "high";
 export type DiagramFontFamily = "sans" | "serif" | "monospace";
+export type FreehandToolMode = "pen" | "highlighter" | "line" | "arrow" | "eraser-point" | "eraser-object";
+
+export interface FreehandProfile {
+  id: string;
+  name: string;
+  color: string;
+  width: number;
+  opacity: number;
+  tool: "pen" | "highlighter";
+}
 
 export interface CurvePoint {
   x: number;
@@ -46,6 +56,7 @@ export interface DiagramNode {
   locked?: boolean;
   groupId?: string;
   parentId?: string;
+  parentConnection?: DiagramEdgeStyle;
   siblingOrder?: number;
   collapsed?: boolean;
   labels?: string[];
@@ -66,18 +77,30 @@ export interface DiagramNode {
   linkUrl?: string;
   flashcards?: Flashcard[];
   pathPoints?: CurvePoint[];
+  strokeOpacity?: number;
+  lineArrow?: boolean;
+  closedPath?: boolean;
 }
 
 export type ConnectorKind = "straight" | "elbow" | "curve";
+export type ArrowheadKind = "none" | "triangle" | "open" | "diamond" | "circle" | "bar";
 
-export interface DiagramEdge {
+export interface DiagramEdgeStyle {
+  label?: string;
+  stroke?: string;
+  connectorKind?: ConnectorKind;
+  autoRoute?: boolean;
+  startArrowhead?: ArrowheadKind;
+  endArrowhead?: ArrowheadKind;
+}
+
+export interface DiagramEdge extends DiagramEdgeStyle {
   id: string;
   from: string;
   to: string;
-  label?: string;
-  connectorKind?: ConnectorKind;
-  autoRoute?: boolean;
+  /** @deprecated Use startArrowhead. Kept to migrate existing local documents. */
   arrowStart?: boolean;
+  /** @deprecated Use endArrowhead. Kept to migrate existing local documents. */
   arrowEnd?: boolean;
 }
 
@@ -107,6 +130,7 @@ export interface EditorSettings {
   gridStyle: GridStyle;
   gridSpacingPx: number;
   snapToGrid: boolean;
+  snapFreehandToGrid: boolean;
   rotationSnapDegrees: number;
   showRulers: boolean;
   unit: MeasurementUnit;
@@ -144,6 +168,7 @@ export const defaultEditorSettings: EditorSettings = {
   gridStyle: "dots",
   gridSpacingPx: 24,
   snapToGrid: false,
+  snapFreehandToGrid: false,
   rotationSnapDegrees: 15,
   showRulers: true,
   unit: "px",

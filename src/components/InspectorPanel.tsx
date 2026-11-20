@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BookOpen, Link2, PencilLine, Plus, Sparkles, Spline, Tag, Trash2, Type, X } from "lucide-react";
 import type { DiagramEdge, DiagramNode, Flashcard, InspectorSection, ShapeKind } from "../model";
 import { shapeLibrary } from "../shapeLibrary";
+import { arrowheadOptions, endArrowhead, startArrowhead } from "../edgeHelpers";
 
 interface InspectorPanelProps {
   section: InspectorSection;
@@ -210,13 +211,14 @@ export default function InspectorPanel({
         </div>
       ) : edge ? (
         <div className="inspector-content">
-          {section === "content" && <div className="field-group"><label htmlFor="edge-label">Etykieta połączenia</label><input id="edge-label" value={edge.label ?? ""} onChange={(event) => onUpdateEdge(edge.id, { label: event.target.value })} placeholder="Opis relacji" /></div>}
+          {section === "content" && <div className="field-group"><label htmlFor="edge-label">Tekst połączenia</label><input id="edge-label" value={edge.label ?? ""} onChange={(event) => onUpdateEdge(edge.id, { label: event.target.value })} placeholder="Opis relacji" /></div>}
           {section === "style" && <>
             <div className="field-group"><label htmlFor="edge-style">Rodzaj łącznika</label><select id="edge-style" value={edge.connectorKind ?? "straight"} onChange={(event) => onUpdateEdge(edge.id, { connectorKind: event.target.value as DiagramEdge["connectorKind"] })}><option value="straight">Prosty</option><option value="elbow">Łamany</option><option value="curve">Krzywy</option></select></div>
             <label className="settings-toggle"><input type="checkbox" checked={edge.autoRoute !== false} onChange={(event) => onUpdateEdge(edge.id, { autoRoute: event.target.checked })} /><span>Omijaj pozostałe kształty</span></label>
-            <label className="settings-toggle"><input type="checkbox" checked={edge.arrowStart === true} onChange={(event) => onUpdateEdge(edge.id, { arrowStart: event.target.checked })} /><span>Grot na początku</span></label>
-            <label className="settings-toggle"><input type="checkbox" checked={edge.arrowEnd !== false} onChange={(event) => onUpdateEdge(edge.id, { arrowEnd: event.target.checked })} /><span>Grot na końcu</span></label>
-            <div className="inspector-note"><Spline size={15} /><p>Połączenie pozostaje przyłączone do kształtów podczas ich przesuwania.</p></div>
+            <label className="field-group inspector-color-control"><span>Kolor połączenia</span><input type="color" value={edge.stroke ?? "#c6c3d9"} onChange={(event) => onUpdateEdge(edge.id, { stroke: event.target.value })} /></label>
+            <label className="settings-field"><span>Grot na początku (od)</span><select value={startArrowhead(edge)} onChange={(event) => onUpdateEdge(edge.id, { startArrowhead: event.target.value as DiagramEdge["startArrowhead"] })}>{arrowheadOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label className="settings-field"><span>Grot na końcu (do)</span><select value={endArrowhead(edge)} onChange={(event) => onUpdateEdge(edge.id, { endArrowhead: event.target.value as DiagramEdge["endArrowhead"] })}>{arrowheadOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <div className="inspector-note"><Spline size={15} /><p>Początek oznacza źródło, a koniec cel połączenia. Gałąź rodzic–dziecko domyślnie wskazuje dziecko i pozostaje przyłączona podczas przesuwania elementów.</p></div>
           </>}
         </div>
       ) : null}

@@ -1,6 +1,7 @@
 import type { DiagramDocument, DiagramNode } from "./model";
 import { bezierPath, connectorGeometry, nodeBounds, nodeCenter } from "./geometry";
 import { getVisibleMindMapNodes } from "./mindmapLayout";
+import { arrowheadMarkerId, endArrowhead, parentEdgeFor, startArrowhead } from "./edgeHelpers";
 
 function escapeXml(value: string): string {
   return value
@@ -40,7 +41,7 @@ function renderShape(node: DiagramNode, fill: string, stroke: string, strokeWidt
   if (node.kind === "manualInput") return polygon(`${x},${y + h * 0.2} ${right},${y} ${right},${bottom} ${x},${bottom}`);
   if (node.kind === "line") return `<line x1="${x}" y1="${cy}" x2="${right}" y2="${cy}" stroke="${stroke}" stroke-width="${strokeWidth}"/>`;
   if (node.kind === "text") return "";
-  if (node.kind === "freehand") return `<path d="${bezierPath(node.pathPoints ?? [])}" transform="translate(${x} ${y})" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  if (node.kind === "freehand") return `<path d="${bezierPath(node.pathPoints ?? [])}${node.closedPath ? " Z" : ""}" transform="translate(${x} ${y})" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-opacity="${node.strokeOpacity ?? 1}" stroke-linecap="round" stroke-linejoin="round"${node.lineArrow ? ` marker-end="url(#${arrowheadMarkerId("triangle")})"` : ""}/>`;
   if (node.kind === "image") {
     const href = escapeXml(node.imageData ?? node.imageSrc ?? "");
     return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="#fff" stroke="${stroke}" stroke-width="${strokeWidth}"/><image x="${x}" y="${y}" width="${w}" height="${h}" href="${href}" preserveAspectRatio="xMidYMid meet"/>`;
@@ -124,25 +125,42 @@ export function createSvgMarkup(document: DiagramDocument): string {
   const bottom = bounds.length ? Math.max(...bounds.map((box) => box.top + box.height)) + margin : margin;
   const width = Math.max(right - left, 640);
   const height = Math.max(bottom - top, 420);
+  const marker = (kind: ReturnType<typeof startArrowhead>) => {
+    if (kind === "none") return "";
+    const id = arrowheadMarkerId(kind);
+    if (kind === "triangle") return `<marker id="${id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker>`;
+    if (kind === "open") return `<marker id="${id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="context-stroke" stroke-width="1.5"/></marker>`;
+    if (kind === "diamond") return `<marker id="${id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 0 5 L 5 1 L 10 5 L 5 9 z" fill="context-stroke"/></marker>`;
+    if (kind === "circle") return `<marker id="${id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth"><circle cx="5" cy="5" r="3.5" fill="context-stroke"/></marker>`;
+    return `<marker id="${id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 7 1 L 7 9" fill="none" stroke="context-stroke" stroke-width="1.5"/></marker>`;
+  };
+  const arrowMarkers = ["triangle", "open", "diamond", "circle", "bar"]
+    .map((kind) => marker(kind as Exclude<ReturnType<typeof startArrowhead>, "none">)).join("");
+  const arrowAttributes = (edge: Parameters<typeof startArrowhead>[0]) => {
+    const start = startArrowhead(edge);
+    const end = endArrowhead(edge);
+    return `${start === "none" ? "" : ` marker-start="url(#${arrowheadMarkerId(start)})"`}${end === "none" ? "" : ` marker-end="url(#${arrowheadMarkerId(end)})"`}`;
+  };
   const treeEdges = visibleNodes.flatMap((node) => {
     const parent = node.parentId ? nodeMap.get(node.parentId) : null;
     if (!parent) return [];
-    const geometry = connectorGeometry({ id: `tree-${node.id}`, from: parent.id, to: node.id, connectorKind: "curve", autoRoute: false, arrowEnd: false }, parent, node, visibleNodes);
-    const stroke = escapeXml(node.stroke ?? "#bdb6da");
-    return [`<path d="${geometry.d}" fill="none" stroke="${stroke}" stroke-width="2.5" stroke-linecap="round"/>`];
+    const edge = parentEdgeFor(node, parent);
+    const geometry = connectorGeometry(edge, parent, node, visibleNodes);
+    const stroke = escapeXml(edge.stroke ?? "#bdb6da");
+    const label = edge.label ? `<text x="${geometry.labelPoint.x}" y="${geometry.labelPoint.y - 8}" fill="#625d7f" font-size="12" text-anchor="middle" paint-order="stroke" stroke="#fff" stroke-width="5">${escapeXml(edge.label)}</text>` : "";
+    return [`<g><path d="${geometry.d}" fill="none" stroke="${stroke}" stroke-width="2.5" stroke-linecap="round"${arrowAttributes(edge)}/>${label}</g>`];
   }).join("");
   const edges = document.edges.map((edge) => {
     const from = nodeMap.get(edge.from);
     const to = nodeMap.get(edge.to);
     if (!from || !to) return "";
     const geometry = connectorGeometry(edge, from, to, visibleNodes);
-    const start = edge.arrowStart ? " marker-start=\"url(#arrowhead)\"" : "";
-    const end = edge.arrowEnd === false ? "" : " marker-end=\"url(#arrowhead)\"";
+    const stroke = escapeXml(edge.stroke ?? "#c6c3d9");
     const label = edge.label ? `<text x="${geometry.labelPoint.x}" y="${geometry.labelPoint.y - 8}" fill="#625d7f" font-size="12" text-anchor="middle" paint-order="stroke" stroke="#fff" stroke-width="5">${escapeXml(edge.label)}</text>` : "";
-    return `<g><path d="${geometry.d}" fill="none" stroke="#c6c3d9" stroke-width="2"${start}${end}/>${label}</g>`;
+    return `<g><path d="${geometry.d}" fill="none" stroke="${stroke}" stroke-width="2"${arrowAttributes(edge)}/>${label}</g>`;
   }).join("");
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${left} ${top} ${width} ${height}" role="img" aria-label="${escapeXml(document.title)}"><defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="#aaa6c4"/></marker></defs><rect x="${left}" y="${top}" width="${width}" height="${height}" fill="#fbfbfe"/>${treeEdges}${edges}${visibleNodes.map(renderNode).join("")}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${left} ${top} ${width} ${height}" role="img" aria-label="${escapeXml(document.title)}"><defs>${arrowMarkers}</defs><rect x="${left}" y="${top}" width="${width}" height="${height}" fill="#fbfbfe"/>${treeEdges}${edges}${visibleNodes.map(renderNode).join("")}</svg>`;
 }
 
 export function downloadSvg(document: DiagramDocument): void {

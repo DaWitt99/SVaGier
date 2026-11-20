@@ -1,10 +1,12 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
 import { BookOpen, CornerDownRight, GitBranch, GitBranchPlus, Link2, Lock, Palette, Ruler, Tags, Trash2, Type, Unlock, Spline, X } from "lucide-react";
-import type { Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, Guide, GuideAxis, InspectorSection, MeasurementUnit } from "../model";
+import type { ArrowheadKind, Camera, CurvePoint, DiagramEdge, DiagramNode, EditorSettings, FreehandToolMode, Guide, GuideAxis, InspectorSection, MeasurementUnit } from "../model";
 import { formatMeasurement } from "../units";
 import { shapeDefinition } from "../shapeLibrary";
 import { bezierPath, connectorGeometry, nodeBounds, nodeCenter, smoothCurve, type Point } from "../geometry";
+import { arrowheadMarkerId, childIdFromParentEdgeId, endArrowhead, parentEdgeFor, startArrowhead } from "../edgeHelpers";
+import { lineStroke, recognizeStroke, snapRecognizedStroke, stabilizeStroke, type RecognizedStroke } from "../freehand";
 
 interface DiagramCanvasProps {
   nodes: DiagramNode[];
@@ -14,6 +16,14 @@ interface DiagramCanvasProps {
   selectedNodeIds: string[];
   nodesWithChildren: Set<string>;
   toolMode: "select" | "freehand";
+  freehandTool: FreehandToolMode;
+  freehandColor: string;
+  freehandWidth: number;
+  freehandOpacity: number;
+  freehandStabilization: number;
+  freehandPalmRejection: boolean;
+  freehandRecognizeShapes: boolean;
+  freehandEraserSize: number;
   connectMode: boolean;
   connectSourceId: string | null;
   selectedEdgeId: string | null;
@@ -36,7 +46,9 @@ interface DiagramCanvasProps {
   onCreateEdge: (fromId: string, toId: string) => void;
   onSelectEdge: (id: string | null) => void;
   onToggleCollapse: (id: string) => void;
-  onAddFreehand: (x: number, y: number, width: number, height: number, points: CurvePoint[]) => void;
+  onAddFreehand: (stroke: Omit<DiagramNode, "id">) => void;
+  onEraseFreehandObjects: (ids: string[]) => void;
+  onEraseFreehandAt: (points: Point[], radius: number) => void;
   onEditPathPoint: (nodeId: string, index: number, handle: "anchor" | "controlIn" | "controlOut", point: Point) => void;
   onClearSelection: () => void;
   onAddGuide: (axis: GuideAxis, position: number) => string;
@@ -65,7 +77,9 @@ type DragSession =
   | { type: "resize"; pointerId: number; start: ScreenPoint; handle: string; nodes: DiagramNode[]; bounds: WorldBounds }
   | { type: "rotate"; pointerId: number; nodes: DiagramNode[]; pivot: ScreenPoint; startAngle: number }
   | { type: "connect"; pointerId: number; fromId: string; start: ScreenPoint }
-  | { type: "freehand"; pointerId: number; points: ScreenPoint[] }
+  | { type: "freehand"; pointerId: number; points: ScreenPoint[]; tool: Exclude<FreehandToolMode, "eraser-point" | "eraser-object"> }
+  | { type: "eraser-point"; pointerId: number; points: Point[] }
+  | { type: "eraser-object"; pointerId: number; nodeIds: string[] }
   | { type: "path-handle"; pointerId: number; nodeId: string; index: number; handle: "anchor" | "controlIn" | "controlOut" };
 
 interface ScreenPoint {
@@ -109,7 +123,7 @@ function shapeFor(node: DiagramNode) {
   if (node.kind === "manualInput") return polygon(`${x},${y + h * 0.2} ${right},${y} ${right},${bottom} ${x},${bottom}`);
   if (node.kind === "line") return <line x1={x} y1={cy} x2={right} y2={cy} className="standalone-line" style={{ stroke: node.stroke ?? "#8071d9", strokeWidth: node.strokeWidth ?? 2 }} />;
   if (node.kind === "text") return null;
-  if (node.kind === "freehand") return <path d={bezierPath(node.pathPoints ?? [])} transform={`translate(${x} ${y})`} className="freehand-shape" style={{ stroke: node.stroke ?? "#5e50b4", strokeWidth: node.strokeWidth ?? 3 }} />;
+  if (node.kind === "freehand") return <path d={`${bezierPath(node.pathPoints ?? [])}${node.closedPath ? " Z" : ""}`} transform={`translate(${x} ${y})`} className="freehand-shape" style={{ stroke: node.stroke ?? "#5e50b4", strokeWidth: node.strokeWidth ?? 3, strokeOpacity: node.strokeOpacity ?? 1 }} markerEnd={node.lineArrow ? `url(#${arrowheadMarkerId("triangle")})` : undefined} />;
   if (node.kind === "image") return <><rect x={x} y={y} width={w} height={h} rx="6" className="image-frame" /><image x={x} y={y} width={w} height={h} href={node.imageData ?? node.imageSrc ?? ""} preserveAspectRatio="xMidYMid meet" /></>;
   if (node.kind === "cloud") return <path d={`M ${x + w * 0.2} ${y + h * 0.8} C ${x - w * 0.02} ${y + h * 0.78}, ${x - w * 0.02} ${y + h * 0.48}, ${x + w * 0.15} ${y + h * 0.4} C ${x + w * 0.12} ${y + h * 0.08}, ${x + w * 0.44} ${y - h * 0.02}, ${x + w * 0.54} ${y + h * 0.25} C ${x + w * 0.75} ${y + h * 0.08}, ${x + w * 0.98} ${y + h * 0.28}, ${x + w * 0.87} ${y + h * 0.48} C ${x + w * 1.08} ${y + h * 0.62}, ${x + w * 0.94} ${y + h * 0.88}, ${x + w * 0.75} ${y + h * 0.82} C ${x + w * 0.59} ${y + h * 1.05}, ${x + w * 0.36} ${y + h * 0.96}, ${x + w * 0.32} ${y + h * 0.82} Z`} className="node-shape" style={style} />;
   if (node.kind === "note") return <path d={`M ${x} ${y} H ${right - 22} L ${right} ${y + 22} V ${bottom} H ${x} Z M ${right - 22} ${y} V ${y + 22} H ${right}`} className="node-shape uml-fold" style={style} />;
@@ -216,12 +230,28 @@ interface DiagramEdgeViewProps {
 
 const DiagramEdgeView = memo(function DiagramEdgeView({ edge, from, to, nodes, selected, selectable = true, className, stroke }: DiagramEdgeViewProps) {
   const geometry = connectorGeometry(edge, from, to, nodes);
+  const startMarker = startArrowhead(edge);
+  const endMarker = endArrowhead(edge);
+  const edgeStroke = selected ? undefined : stroke ?? edge.stroke;
   return <g data-edge-id={selectable ? edge.id : undefined} className={`diagram-connection${selected ? " is-selected" : ""}${className ? ` ${className}` : ""}`} pointerEvents={selectable ? undefined : "none"}>
     {selectable && <path d={geometry.d} className="diagram-edge-hit" />}
-    <path d={geometry.d} className="diagram-edge" style={stroke ? { stroke } : undefined} markerStart={edge.arrowStart ? "url(#arrowhead)" : undefined} markerEnd={edge.arrowEnd === false ? undefined : "url(#arrowhead)"} />
+    <path d={geometry.d} className="diagram-edge" style={edgeStroke ? { stroke: edgeStroke } : undefined} markerStart={startMarker === "none" ? undefined : `url(#${arrowheadMarkerId(startMarker)})`} markerEnd={endMarker === "none" ? undefined : `url(#${arrowheadMarkerId(endMarker)})`} />
     {edge.label && <text x={geometry.labelPoint.x} y={geometry.labelPoint.y - 8} className="edge-label">{edge.label}</text>}
   </g>;
 });
+
+function ArrowheadMarkers() {
+  const kinds: Exclude<ArrowheadKind, "none">[] = ["triangle", "open", "diamond", "circle", "bar"];
+  return <>
+    {kinds.map((kind) => <marker key={kind} id={arrowheadMarkerId(kind)} markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth">
+      {kind === "triangle" && <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />}
+      {kind === "open" && <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="context-stroke" strokeWidth="1.5" />}
+      {kind === "diamond" && <path d="M 0 5 L 5 1 L 10 5 L 5 9 z" fill="context-stroke" />}
+      {kind === "circle" && <circle cx="5" cy="5" r="3.5" fill="context-stroke" />}
+      {kind === "bar" && <path d="M 7 1 L 7 9" fill="none" stroke="context-stroke" strokeWidth="1.5" />}
+    </marker>)}
+  </>;
+}
 
 function clampZoom(zoom: number): number {
   return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
@@ -644,6 +674,14 @@ export default function DiagramCanvas({
   selectedNodeIds,
   nodesWithChildren,
   toolMode,
+  freehandTool,
+  freehandColor,
+  freehandWidth,
+  freehandOpacity,
+  freehandStabilization,
+  freehandPalmRejection,
+  freehandRecognizeShapes,
+  freehandEraserSize,
   connectMode,
   connectSourceId,
   selectedEdgeId,
@@ -667,6 +705,8 @@ export default function DiagramCanvas({
   onSelectEdge,
   onToggleCollapse,
   onAddFreehand,
+  onEraseFreehandObjects,
+  onEraseFreehandAt,
   onEditPathPoint,
   onClearSelection,
   onAddGuide,
@@ -680,13 +720,19 @@ export default function DiagramCanvas({
   const [marquee, setMarquee] = useState<{ start: ScreenPoint; current: ScreenPoint } | null>(null);
   const [connectionPreview, setConnectionPreview] = useState<{ start: Point; end: Point } | null>(null);
   const [freehandPreview, setFreehandPreview] = useState<CurvePoint[]>([]);
+  const [eraserPreview, setEraserPreview] = useState<Point | null>(null);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const selectedNodes = nodes.filter((node) => selectedNodeIds.includes(node.id));
   const movableSelectedNodes = selectedNodes.filter((node) => !node.locked);
   const selectionBounds = boundsForNodes(movableSelectedNodes);
   const contextBounds = boundsForNodes(selectedNodes);
   const selectedContextNode = selectedNodeIds.length === 1 ? selectedNodes[0] ?? null : null;
-  const selectedContextEdge = selectedNodeIds.length === 0 ? edges.find((edge) => edge.id === selectedEdgeId) ?? null : null;
+  const selectedContextEdge = selectedNodeIds.length === 0 && selectedEdgeId ? edges.find((edge) => edge.id === selectedEdgeId) ?? (() => {
+    const childId = childIdFromParentEdgeId(selectedEdgeId);
+    const child = childId ? allNodes.find((node) => node.id === childId) : undefined;
+    const parent = child?.parentId ? allNodes.find((node) => node.id === child.parentId) : undefined;
+    return child && parent ? parentEdgeFor(child, parent) : null;
+  })() : null;
   const contextEdgeFrom = selectedContextEdge ? nodeById.get(selectedContextEdge.from) : undefined;
   const contextEdgeTo = selectedContextEdge ? nodeById.get(selectedContextEdge.to) : undefined;
   const contextWorldPoint = contextBounds
@@ -849,12 +895,38 @@ export default function DiagramCanvas({
     return null;
   }
 
-  function beginFreehand(event: ReactPointerEvent<SVGSVGElement>, point: ScreenPoint) {
+  function beginFreehand(event: ReactPointerEvent<SVGSVGElement>, point: ScreenPoint, tool: Exclude<FreehandToolMode, "eraser-point" | "eraser-object">) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     if (event.pointerType === "touch") pointerPointsRef.current.set(event.pointerId, point);
-    dragRef.current = { type: "freehand", pointerId: event.pointerId, points: [point] };
+    dragRef.current = { type: "freehand", pointerId: event.pointerId, points: [point], tool };
     setFreehandPreview(smoothCurve([worldPoint(point)]));
+  }
+
+  function freehandNodeAt(clientX: number, clientY: number): DiagramNode | undefined {
+    for (const element of document.elementsFromPoint(clientX, clientY)) {
+      const nodeId = element.closest("[data-node-id]")?.getAttribute("data-node-id");
+      const node = nodeId ? allNodes.find((item) => item.id === nodeId) : undefined;
+      if (node?.kind === "freehand" && !node.locked) return node;
+    }
+    return undefined;
+  }
+
+  function beginPointErase(event: ReactPointerEvent<SVGSVGElement>, point: ScreenPoint) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    onBeginHistoryAction();
+    dragRef.current = { type: "eraser-point", pointerId: event.pointerId, points: [worldPoint(point)] };
+    setEraserPreview(worldPoint(point));
+  }
+
+  function beginObjectErase(event: ReactPointerEvent<SVGSVGElement>, point: ScreenPoint) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    onBeginHistoryAction();
+    const hit = freehandNodeAt(event.clientX, event.clientY);
+    dragRef.current = { type: "eraser-object", pointerId: event.pointerId, nodeIds: hit ? [hit.id] : [] };
+    setEraserPreview(worldPoint(point));
   }
 
   function handleCanvasPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
@@ -862,6 +934,10 @@ export default function DiagramCanvas({
     if (event.pointerType !== "touch" && event.button !== 0 && event.button !== 1) return;
     const isGuideTarget = Boolean(target.closest("[data-guide-id]"));
     const isRulerTarget = Boolean(target.closest("[data-ruler-axis]"));
+    if (toolMode === "freehand" && freehandPalmRejection && event.pointerType === "touch" && !isGuideTarget && !isRulerTarget) {
+      event.preventDefault();
+      return;
+    }
     const connectHandle = target.closest("[data-connect-handle]");
     if (connectMode && connectHandle && event.button === 0) {
       const nodeId = connectHandle.closest("[data-node-id]")?.getAttribute("data-node-id");
@@ -939,7 +1015,10 @@ export default function DiagramCanvas({
 
     if (toolMode === "freehand" && !connectMode && event.button === 0) {
       onSelectEdge(null);
-      beginFreehand(event, pointInSvg(event));
+      const point = pointInSvg(event);
+      if (freehandTool === "eraser-point") beginPointErase(event, point);
+      else if (freehandTool === "eraser-object") beginObjectErase(event, point);
+      else beginFreehand(event, point, freehandTool);
       return;
     }
 
@@ -1097,9 +1176,28 @@ export default function DiagramCanvas({
     }
     if (session.type === "freehand") {
       const last = session.points[session.points.length - 1];
-      const nextPoints = distance(last, point) >= 2 ? [...session.points, point] : session.points;
+      const nextPoints = session.tool === "line" || session.tool === "arrow"
+        ? [session.points[0], point]
+        : distance(last, point) >= 2 ? [...session.points, point] : session.points;
       dragRef.current = { ...session, points: nextPoints };
-      setFreehandPreview(smoothCurve(nextPoints.map((item) => worldPoint(item))));
+      const worldPoints = nextPoints.map((item) => worldPoint(item));
+      setFreehandPreview(smoothCurve(stabilizeStroke(worldPoints, freehandStabilization)));
+      return;
+    }
+    if (session.type === "eraser-point") {
+      const current = worldPoint(point);
+      const last = session.points[session.points.length - 1];
+      const minimumDistance = Math.max(1, freehandEraserSize / (2 * camera.zoom) * 0.2);
+      if (distance(last, current) >= minimumDistance) {
+        dragRef.current = { ...session, points: [...session.points, current] };
+      }
+      setEraserPreview(current);
+      return;
+    }
+    if (session.type === "eraser-object") {
+      const hit = freehandNodeAt(event.clientX, event.clientY);
+      if (hit && !session.nodeIds.includes(hit.id)) dragRef.current = { ...session, nodeIds: [...session.nodeIds, hit.id] };
+      setEraserPreview(worldPoint(point));
       return;
     }
     if (session.type === "marquee") {
@@ -1211,17 +1309,77 @@ export default function DiagramCanvas({
     if (session.type === "freehand") {
       const screenPoints = session.points;
       const end = pointInSvg(event);
-      if (distance(screenPoints[screenPoints.length - 1], end) >= 1) screenPoints.push(end);
-      if (screenPoints.length >= 2) {
-        const points = screenPoints.map((item) => worldPoint(item));
-        const left = Math.min(...points.map((item) => item.x));
-        const top = Math.min(...points.map((item) => item.y));
-        const width = Math.max(1, Math.max(...points.map((item) => item.x)) - left);
-        const height = Math.max(1, Math.max(...points.map((item) => item.y)) - top);
-        const local = points.map((item) => ({ x: item.x - left, y: item.y - top }));
-        onAddFreehand(left, top, width, height, smoothCurve(local));
+      if (session.tool === "line" || session.tool === "arrow") {
+        if (distance(screenPoints[0], end) >= 2) {
+          const points = lineStroke(worldPoint(screenPoints[0]), worldPoint(end));
+          const stroke = settings.snapFreehandToGrid ? snapRecognizedStroke(points, settings.gridSpacingPx) : points;
+          const { left, top, width, height } = stroke.bounds;
+          onAddFreehand({
+            kind: "freehand", x: left, y: top, width, height, title: "", detail: "",
+            pathPoints: stroke.points.map((point) => ({ ...point, x: point.x - left, y: point.y - top,
+              controlIn: point.controlIn && { x: point.controlIn.x - left, y: point.controlIn.y - top },
+              controlOut: point.controlOut && { x: point.controlOut.x - left, y: point.controlOut.y - top },
+            })),
+            stroke: freehandColor, strokeWidth: freehandWidth, strokeOpacity: freehandOpacity,
+            lineArrow: session.tool === "arrow",
+          });
+        }
+      } else {
+        if (distance(screenPoints[screenPoints.length - 1], end) >= 1) screenPoints.push(end);
+        if (screenPoints.length >= 2) {
+          const points = stabilizeStroke(screenPoints.map((item) => worldPoint(item)), freehandStabilization);
+          let recognized: RecognizedStroke | null = session.tool === "pen" && freehandRecognizeShapes ? recognizeStroke(points) : null;
+          if (recognized && settings.snapFreehandToGrid) recognized = snapRecognizedStroke(recognized, settings.gridSpacingPx);
+          if (recognized) {
+            const { left, top, width, height } = recognized.bounds;
+            onAddFreehand({
+              kind: "freehand", x: left, y: top, width, height, title: "", detail: "",
+              pathPoints: recognized.points.map((point) => ({ ...point, x: point.x - left, y: point.y - top,
+                controlIn: point.controlIn && { x: point.controlIn.x - left, y: point.controlIn.y - top },
+                controlOut: point.controlOut && { x: point.controlOut.x - left, y: point.controlOut.y - top },
+              })),
+              closedPath: recognized.closed,
+              stroke: freehandColor, strokeWidth: freehandWidth, strokeOpacity: freehandOpacity,
+            });
+          } else {
+            let left = Infinity;
+            let top = Infinity;
+            let right = -Infinity;
+            let bottom = -Infinity;
+            for (const item of points) {
+              left = Math.min(left, item.x);
+              top = Math.min(top, item.y);
+              right = Math.max(right, item.x);
+              bottom = Math.max(bottom, item.y);
+            }
+            const width = Math.max(1, right - left);
+            const height = Math.max(1, bottom - top);
+            const local = points.map((item) => ({ x: item.x - left, y: item.y - top }));
+            onAddFreehand({
+              kind: "freehand", x: left, y: top, width, height, title: "", detail: "",
+              pathPoints: smoothCurve(local), stroke: freehandColor, strokeWidth: freehandWidth, strokeOpacity: freehandOpacity,
+            });
+          }
+        }
       }
       setFreehandPreview([]);
+      dragRef.current = null;
+      return;
+    }
+    if (session.type === "eraser-point") {
+      const current = worldPoint(pointInSvg(event));
+      const last = session.points[session.points.length - 1];
+      const points = distance(last, current) >= 1 ? [...session.points, current] : session.points;
+      onEraseFreehandAt(points, freehandEraserSize / (2 * camera.zoom));
+      onEndHistoryAction();
+      setEraserPreview(null);
+      dragRef.current = null;
+      return;
+    }
+    if (session.type === "eraser-object") {
+      onEraseFreehandObjects(session.nodeIds);
+      onEndHistoryAction();
+      setEraserPreview(null);
       dragRef.current = null;
       return;
     }
@@ -1254,10 +1412,11 @@ export default function DiagramCanvas({
     const session = dragRef.current;
     if (!session || session.pointerId !== event.pointerId) return;
     if (session.type === "nodes" && session.clickSelection) onSetSelection(session.clickSelection);
-    if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide" || session.type === "path-handle") onEndHistoryAction();
+    if (session.type === "nodes" || session.type === "resize" || session.type === "rotate" || session.type === "guide" || session.type === "path-handle" || session.type === "eraser-point" || session.type === "eraser-object") onEndHistoryAction();
     setMarquee(null);
     setConnectionPreview(null);
     setFreehandPreview([]);
+    setEraserPreview(null);
     dragRef.current = null;
   }
 
@@ -1297,9 +1456,7 @@ export default function DiagramCanvas({
       >
         <defs>
           <GridPattern settings={settings} camera={camera} />
-          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="strokeWidth">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#aaa6c4" />
-          </marker>
+          <ArrowheadMarkers />
         </defs>
         <rect x={viewport.originX} y={viewport.originY} width={viewport.width} height={viewport.height} fill="#fbfbfe" data-canvas-background="true" />
         <rect x={viewport.originX} y={viewport.originY} width={viewport.width} height={viewport.height} fill="url(#grid-pattern)" data-canvas-background="true" />
@@ -1307,8 +1464,8 @@ export default function DiagramCanvas({
           {nodes.map((node) => {
             const parent = node.parentId ? nodeById.get(node.parentId) : null;
             if (!parent) return null;
-            const edge: DiagramEdge = { id: `tree-${node.id}`, from: parent.id, to: node.id, connectorKind: "curve", autoRoute: false, arrowEnd: false };
-            return <DiagramEdgeView key={edge.id} edge={edge} from={parent} to={node} nodes={nodes} selected={false} selectable={false} className="mindmap-branch" stroke={node.stroke ?? "#bdb6da"} />;
+            const edge = parentEdgeFor(node, parent);
+            return <DiagramEdgeView key={edge.id} edge={edge} from={parent} to={node} nodes={nodes} selected={selectedEdgeId === edge.id} className="mindmap-branch" />;
           })}
           {edges.map((edge) => {
             const from = nodeById.get(edge.from);
@@ -1317,9 +1474,10 @@ export default function DiagramCanvas({
           })}
           {nodes.map((node) => <DiagramNodeView key={node.id} node={node} selected={selectedNodeIds.includes(node.id)} connectSource={node.id === connectSourceId} showConnectHandles={connectMode} hasChildren={nodesWithChildren.has(node.id)} />)}
           {freehandPreview.length > 1
-            ? <path d={bezierPath(freehandPreview)} className="freehand-preview" />
-            : freehandPreview.length === 1 && <circle cx={freehandPreview[0].x} cy={freehandPreview[0].y} r={2 / camera.zoom} className="freehand-preview-point" />}
+            ? <path d={bezierPath(freehandPreview)} className="freehand-preview" style={{ stroke: freehandColor, strokeWidth: freehandWidth, strokeOpacity: freehandOpacity }} markerEnd={freehandTool === "arrow" ? `url(#${arrowheadMarkerId("triangle")})` : undefined} />
+            : freehandPreview.length === 1 && <circle cx={freehandPreview[0].x} cy={freehandPreview[0].y} r={2 / camera.zoom} className="freehand-preview-point" style={{ fill: freehandColor, opacity: freehandOpacity }} />}
           {connectionPreview && <path d={`M ${connectionPreview.start.x} ${connectionPreview.start.y} L ${connectionPreview.end.x} ${connectionPreview.end.y}`} className="connection-preview" />}
+          {eraserPreview && <circle cx={eraserPreview.x} cy={eraserPreview.y} r={freehandEraserSize / (2 * camera.zoom)} className="freehand-eraser-cursor" />}
         </g>
         <GuideOverlays guides={settings.guides} camera={camera} viewport={viewport} />
         <SelectionOverlay bounds={selectionBounds} camera={camera} />

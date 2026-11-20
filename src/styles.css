@@ -825,6 +825,42 @@ select:focus-visible {
 
 .shape-library-panel > footer svg { flex: 0 0 auto; color: #8d7be8; }
 
+.freehand-tools-panel {
+  position: absolute;
+  top: 32px;
+  left: 32px;
+  z-index: 4;
+  display: flex;
+  width: min(330px, calc(100% - 64px));
+  max-height: calc(100% - 64px);
+  flex-direction: column;
+  gap: 13px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid #e8e7ef;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 12px 34px #302e4520;
+}
+.freehand-tools-heading { display: flex; min-height: 38px; align-items: center; justify-content: space-between; }
+.freehand-tools-heading h2 { margin: 4px 0 0; color: #3a394d; font-size: 14px; }
+.freehand-tool-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.freehand-tool-grid button { display: flex; min-width: 0; min-height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 5px; border: 1px solid #efeff4; border-radius: 8px; background: #fff; color: #77758b; font-size: 9px; cursor: pointer; }
+.freehand-tool-grid button:hover { border-color: #d8d1fb; background: #faf9ff; }
+.freehand-tool-grid button.active { border-color: #b9adf5; background: #f1eeff; color: #5b4ab8; }
+.freehand-panel-section { display: flex; flex-direction: column; gap: 10px; padding-top: 11px; border-top: 1px solid #efeff4; }
+.freehand-profile-actions { display: flex; align-items: center; gap: 5px; }
+.freehand-profile-actions input { min-width: 0; height: 31px; flex: 1; padding: 0 8px; border: 1px solid #e8e7ef; border-radius: 7px; color: #4d4b61; font-size: 10px; }
+.freehand-profile-actions button { display: grid; width: 31px; height: 31px; flex: 0 0 31px; place-items: center; border: 1px solid #e8e7ef; border-radius: 7px; background: #fff; color: #77758b; cursor: pointer; }
+.freehand-profile-actions button:hover:not(:disabled) { border-color: #d8d1fb; background: #f5f2ff; color: #5b4ab8; }
+.freehand-profile-actions button:last-child:hover { border-color: #f0c5c7; background: #fff3f3; color: #bf525b; }
+.freehand-profile-actions button:disabled { cursor: default; opacity: .4; }
+.freehand-style-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: end; gap: 10px; }
+.freehand-color input[type="color"] { width: 100%; height: 32px; padding: 3px; cursor: pointer; }
+.freehand-tools-panel input[type="range"] { height: 24px; padding: 0; accent-color: #7965e8; }
+.freehand-tools-panel .settings-toggle { font-size: 10px; }
+.freehand-eraser-cursor { fill: #ffffff66; stroke: #6f62bd; stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+
 .outline-panel {
   position: absolute;
   top: 32px;
@@ -2025,6 +2061,13 @@ kbd {
   }
 
   .shape-library-panel {
+    top: 20px;
+    left: 20px;
+    width: min(330px, calc(100% - 40px));
+    max-height: calc(100% - 40px);
+  }
+
+  .freehand-tools-panel {
     top: 20px;
     left: 20px;
     width: min(330px, calc(100% - 40px));

@@ -25,17 +25,55 @@ import OutlinePanel from "./components/OutlinePanel";
 import ProjectExplorerPanel from "./components/ProjectExplorerPanel";
 import ShapeLibraryPanel from "./components/ShapeLibraryPanel";
 import FlashcardLibraryView from "./components/FlashcardLibraryView";
+import FreehandToolsPanel from "./components/FreehandToolsPanel";
 import { downloadSvg } from "./exportSvg";
+import { childIdFromParentEdgeId, isArrowheadKind, parentEdgeFor } from "./edgeHelpers";
+import { eraseStrokeAt } from "./freehand";
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./components/DiagramCanvas";
-import { defaultEditorSettings, initialDocument, type Camera, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramNode, type DiagramProject, type EditorSettings, type Flashcard, type FlashcardEntry, type GuideAxis, type InspectorSection, type MindMapLayout, type ProjectDrawing, type ProjectWorkspace, type ShapeKind } from "./model";
+import { defaultEditorSettings, initialDocument, type Camera, type ConnectorKind, type CurvePoint, type DiagramDocument, type DiagramEdge, type DiagramEdgeStyle, type DiagramNode, type DiagramProject, type EditorSettings, type Flashcard, type FlashcardEntry, type FreehandProfile, type FreehandToolMode, type GuideAxis, type InspectorSection, type MindMapLayout, type ProjectDrawing, type ProjectWorkspace, type ShapeKind } from "./model";
 import { getVisibleMindMapNodes, layoutMindMap } from "./mindmapLayout";
 import { shapeDefinition } from "./shapeLibrary";
 
 const STORAGE_KEY = "svagier.workspace.v1";
 const LEGACY_STORAGE_KEY = "svagier.document.v1";
+const FREEHAND_PROFILES_KEY = "svagier.freehand-profiles.v1";
+const DEFAULT_FREEHAND_PROFILES: FreehandProfile[] = [
+  { id: "pen", name: "Pióro", color: "#5e50b4", width: 3, opacity: 1, tool: "pen" },
+  { id: "sketch", name: "Szkic", color: "#77758a", width: 1.5, opacity: 0.78, tool: "pen" },
+  { id: "technical", name: "Techniczny", color: "#39384c", width: 2, opacity: 1, tool: "pen" },
+  { id: "highlighter", name: "Zakreślacz", color: "#f0bd43", width: 16, opacity: 0.32, tool: "highlighter" },
+];
+
+function loadFreehandProfiles(): FreehandProfile[] {
+  try {
+    const stored = window.localStorage.getItem(FREEHAND_PROFILES_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((profile): profile is FreehandProfile => isRecord(profile)
+      && typeof profile.id === "string" && profile.id.startsWith("custom-")
+      && typeof profile.name === "string" && typeof profile.color === "string"
+      && typeof profile.width === "number" && typeof profile.opacity === "number"
+      && (profile.tool === "pen" || profile.tool === "highlighter"));
+  } catch {
+    return [];
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeEdgeStyle(value: unknown): DiagramEdgeStyle | undefined {
+  if (!isRecord(value)) return undefined;
+  const style: DiagramEdgeStyle = {};
+  if (typeof value.label === "string") style.label = value.label;
+  if (typeof value.stroke === "string") style.stroke = value.stroke;
+  if (value.connectorKind === "straight" || value.connectorKind === "elbow" || value.connectorKind === "curve") style.connectorKind = value.connectorKind as ConnectorKind;
+  if (typeof value.autoRoute === "boolean") style.autoRoute = value.autoRoute;
+  if (isArrowheadKind(value.startArrowhead)) style.startArrowhead = value.startArrowhead;
+  if (isArrowheadKind(value.endArrowhead)) style.endArrowhead = value.endArrowhead;
+  return style;
 }
 
 function normalizeDocument(value: unknown): DiagramDocument | null {
@@ -58,9 +96,19 @@ function normalizeDocument(value: unknown): DiagramDocument | null {
         siblingOrder: ["mindmaps", "engineering", "uml", "export"].indexOf(node.id),
       })
     : parsed.nodes;
-  const edges = isLegacyStarterMap ? parsed.edges.filter((edge) => !(edge.from === "idea" && starterBranches.has(edge.to))) : parsed.edges;
-  const normalizedNodes = nodes.map((node) => ({
+  const rawEdges = isLegacyStarterMap ? parsed.edges.filter((edge) => !(edge.from === "idea" && starterBranches.has(edge.to))) : parsed.edges;
+  const edges: DiagramEdge[] = rawEdges.map((edge): DiagramEdge => {
+    const style = normalizeEdgeStyle(edge) ?? {};
+    return {
+      ...edge,
+      ...style,
+      startArrowhead: style.startArrowhead ?? (edge.arrowStart ? "triangle" : "none"),
+      endArrowhead: style.endArrowhead ?? (edge.arrowEnd === false ? "none" : "triangle"),
+    };
+  });
+  const normalizedNodes: DiagramNode[] = nodes.map((node) => ({
     ...node,
+    parentConnection: normalizeEdgeStyle(node.parentConnection),
     flashcards: Array.isArray(node.flashcards) ? node.flashcards.flatMap((card) => {
       if (!isRecord(card) || typeof card.id !== "string" || typeof card.front !== "string" || typeof card.back !== "string") return [];
       return [{ id: card.id, front: card.front, back: card.back }];
@@ -186,6 +234,17 @@ function App() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(["idea"]);
   const [activeInspectorSection, setActiveInspectorSection] = useState<InspectorSection | null>(null);
   const [toolMode, setToolMode] = useState<"select" | "freehand">("select");
+  const [freehandTool, setFreehandTool] = useState<FreehandToolMode>("pen");
+  const [customFreehandProfiles, setCustomFreehandProfiles] = useState(loadFreehandProfiles);
+  const freehandProfiles = useMemo(() => [...DEFAULT_FREEHAND_PROFILES, ...customFreehandProfiles], [customFreehandProfiles]);
+  const [activeFreehandProfileId, setActiveFreehandProfileId] = useState("pen");
+  const [freehandColor, setFreehandColor] = useState(DEFAULT_FREEHAND_PROFILES[0].color);
+  const [freehandWidth, setFreehandWidth] = useState(DEFAULT_FREEHAND_PROFILES[0].width);
+  const [freehandOpacity, setFreehandOpacity] = useState(DEFAULT_FREEHAND_PROFILES[0].opacity);
+  const [freehandStabilization, setFreehandStabilization] = useState(35);
+  const [freehandPalmRejection, setFreehandPalmRejection] = useState(true);
+  const [freehandRecognizeShapes, setFreehandRecognizeShapes] = useState(true);
+  const [freehandEraserSize, setFreehandEraserSize] = useState(18);
   const [showShapeLibrary, setShowShapeLibrary] = useState(false);
   const [showFlashcardLibrary, setShowFlashcardLibrary] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
@@ -206,10 +265,16 @@ function App() {
     () => selectedNodes.length === 1 ? selectedNodes[0] : null,
     [selectedNodes],
   );
-  const selectedEdge = useMemo(
-    () => document.edges.find((edge) => edge.id === selectedEdgeId) ?? null,
-    [document.edges, selectedEdgeId],
-  );
+  const selectedEdge = useMemo(() => {
+    if (!selectedEdgeId) return null;
+    const edge = document.edges.find((item) => item.id === selectedEdgeId);
+    if (edge) return edge;
+    const childId = childIdFromParentEdgeId(selectedEdgeId);
+    if (!childId) return null;
+    const child = document.nodes.find((node) => node.id === childId);
+    const parent = child?.parentId ? document.nodes.find((node) => node.id === child.parentId) : undefined;
+    return child && parent ? parentEdgeFor(child, parent) : null;
+  }, [document.edges, document.nodes, selectedEdgeId]);
   useEffect(() => {
     if (!selectedNode && !selectedEdge) setActiveInspectorSection(null);
     else if (selectedEdge && activeInspectorSection && activeInspectorSection !== "content" && activeInspectorSection !== "style") setActiveInspectorSection(null);
@@ -231,6 +296,14 @@ function App() {
     }, 250);
     return () => window.clearTimeout(timeout);
   }, [document, workspace]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(FREEHAND_PROFILES_KEY, JSON.stringify(customFreehandProfiles));
+    } catch {
+      // Keep the current session usable if local storage is unavailable.
+    }
+  }, [customFreehandProfiles]);
 
   function updateWorkspace(updater: (current: ProjectWorkspace) => ProjectWorkspace) {
     const current = workspaceRef.current;
@@ -942,24 +1015,82 @@ function App() {
     reader.readAsDataURL(file);
   }
 
-  function addFreehand(x: number, y: number, width: number, height: number, pathPoints: CurvePoint[]) {
+  function selectFreehandProfile(id: string) {
+    const profile = freehandProfiles.find((item) => item.id === id);
+    if (!profile) return;
+    setActiveFreehandProfileId(profile.id);
+    setFreehandColor(profile.color);
+    setFreehandWidth(profile.width);
+    setFreehandOpacity(profile.opacity);
+    setFreehandTool(profile.tool);
+  }
+
+  function changeFreehandTool(tool: FreehandToolMode) {
+    const activeProfile = freehandProfiles.find((profile) => profile.id === activeFreehandProfileId);
+    if (tool === "highlighter" && activeProfile?.tool !== "highlighter") selectFreehandProfile("highlighter");
+    else if (tool === "pen" && activeProfile?.tool === "highlighter") selectFreehandProfile("pen");
+    setFreehandTool(tool);
+  }
+
+  function saveFreehandProfile(name: string) {
+    const normalizedName = name.trim();
+    if (!normalizedName) return;
+    const existing = customFreehandProfiles.find((profile) => profile.name.toLocaleLowerCase() === normalizedName.toLocaleLowerCase());
+    const profile: FreehandProfile = {
+      id: existing?.id ?? `custom-${crypto.randomUUID()}`,
+      name: normalizedName,
+      color: freehandColor,
+      width: freehandWidth,
+      opacity: freehandOpacity,
+      tool: freehandTool === "highlighter" ? "highlighter" : "pen",
+    };
+    setCustomFreehandProfiles((current) => existing
+      ? current.map((item) => item.id === existing.id ? profile : item)
+      : [...current, profile]);
+    setActiveFreehandProfileId(profile.id);
+  }
+
+  function deleteFreehandProfile(id: string) {
+    setCustomFreehandProfiles((current) => current.filter((profile) => profile.id !== id));
+    if (activeFreehandProfileId === id) selectFreehandProfile("pen");
+  }
+
+  function addFreehand(stroke: Omit<DiagramNode, "id">) {
     const node: DiagramNode = {
+      ...stroke,
       id: `path-${crypto.randomUUID()}`,
-      kind: "freehand",
-      x,
-      y,
-      width,
-      height,
-      title: "",
-      detail: "",
-      pathPoints,
-      stroke: "#5e50b4",
-      strokeWidth: 3,
     };
     updateDocument((current) => ({ ...current, nodes: [...current.nodes, node] }));
     setSelectedNodeIds([node.id]);
     setSelectedEdgeId(null);
-    setToolMode("select");
+  }
+
+  function eraseFreehandObjects(nodeIds: string[]) {
+    const ids = new Set(nodeIds);
+    if (ids.size === 0) return;
+    updateDocument((current) => ({
+      ...current,
+      nodes: current.nodes.filter((node) => !ids.has(node.id) || node.kind !== "freehand" || node.locked),
+    }));
+    setSelectedNodeIds((current) => current.filter((id) => !ids.has(id)));
+    setSelectedEdgeId(null);
+  }
+
+  function eraseFreehandAt(points: { x: number; y: number }[], radius: number) {
+    if (points.length === 0) return;
+    const removedIds = new Set<string>();
+    updateDocument((current) => ({
+      ...current,
+      nodes: current.nodes.flatMap((node) => {
+        if (node.kind !== "freehand" || node.locked) return [node];
+        const segments = eraseStrokeAt(node, points, radius, () => `path-${crypto.randomUUID()}`);
+        if (segments === null) return [node];
+        if (segments.length === 0) removedIds.add(node.id);
+        return segments;
+      }),
+    }));
+    if (removedIds.size > 0) setSelectedNodeIds((current) => current.filter((id) => !removedIds.has(id)));
+    setSelectedEdgeId(null);
   }
 
   function editPathPoint(nodeId: string, index: number, handle: "anchor" | "controlIn" | "controlOut", point: { x: number; y: number }) {
@@ -990,18 +1121,46 @@ function App() {
       setSelectedEdgeId(existing.id);
       return;
     }
-    const edge: DiagramEdge = { id: `edge-${crypto.randomUUID()}`, from, to, connectorKind: "elbow", autoRoute: true, arrowEnd: true };
+    const edge: DiagramEdge = { id: `edge-${crypto.randomUUID()}`, from, to, connectorKind: "elbow", autoRoute: true, startArrowhead: "none", endArrowhead: "triangle" };
     updateDocument((current) => ({ ...current, edges: [...current.edges, edge] }));
     setSelectedNodeIds([]);
     setSelectedEdgeId(edge.id);
   }
 
   function updateEdge(id: string, updates: Partial<DiagramEdge>) {
+    const childId = childIdFromParentEdgeId(id);
+    if (childId) {
+      const styleUpdates: DiagramEdgeStyle = {};
+      if ("label" in updates) styleUpdates.label = updates.label;
+      if ("stroke" in updates) styleUpdates.stroke = updates.stroke;
+      if ("connectorKind" in updates) styleUpdates.connectorKind = updates.connectorKind;
+      if ("autoRoute" in updates) styleUpdates.autoRoute = updates.autoRoute;
+      if ("startArrowhead" in updates) styleUpdates.startArrowhead = updates.startArrowhead;
+      if ("endArrowhead" in updates) styleUpdates.endArrowhead = updates.endArrowhead;
+      updateDocument((current) => ({
+        ...current,
+        nodes: current.nodes.map((node) => node.id === childId
+          ? { ...node, parentConnection: { ...node.parentConnection, ...styleUpdates } }
+          : node),
+      }));
+      return;
+    }
     updateDocument((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === id ? { ...edge, ...updates } : edge) }));
   }
 
   function removeSelectedEdge() {
     if (!selectedEdgeId) return;
+    const childId = childIdFromParentEdgeId(selectedEdgeId);
+    if (childId) {
+      updateDocument((current) => ({
+        ...current,
+        nodes: layoutMindMap(current.nodes.map((node) => node.id === childId
+          ? { ...node, parentId: undefined, parentConnection: undefined }
+          : node), current.editor.mindmapLayout),
+      }));
+      setSelectedEdgeId(null);
+      return;
+    }
     updateDocument((current) => ({ ...current, edges: current.edges.filter((edge) => edge.id !== selectedEdgeId) }));
     setSelectedEdgeId(null);
   }
@@ -1318,6 +1477,14 @@ function App() {
               selectedNodeIds={selectedNodeIds}
               nodesWithChildren={nodesWithChildren}
               toolMode={toolMode}
+              freehandTool={freehandTool}
+              freehandColor={freehandColor}
+              freehandWidth={freehandWidth}
+              freehandOpacity={freehandOpacity}
+              freehandStabilization={freehandStabilization}
+              freehandPalmRejection={freehandPalmRejection}
+              freehandRecognizeShapes={freehandRecognizeShapes}
+              freehandEraserSize={freehandEraserSize}
               connectMode={connectMode}
               connectSourceId={connectSourceId}
               selectedEdgeId={selectedEdgeId}
@@ -1340,6 +1507,8 @@ function App() {
               onSelectEdge={(id) => { setSelectedEdgeId(id); if (id !== null) setSelectedNodeIds([]); }}
               onToggleCollapse={toggleBranchCollapsed}
               onAddFreehand={addFreehand}
+              onEraseFreehandObjects={eraseFreehandObjects}
+              onEraseFreehandAt={eraseFreehandAt}
               onEditPathPoint={editPathPoint}
               onClearSelection={() => setSelectedNodeIds([])}
               onAddGuide={addGuide}
@@ -1371,6 +1540,36 @@ function App() {
                   setConnectMode(false);
                 }}
                 onClose={() => setShowShapeLibrary(false)}
+              />
+            )}
+            {toolMode === "freehand" && (
+              <FreehandToolsPanel
+                profiles={freehandProfiles}
+                activeProfileId={activeFreehandProfileId}
+                tool={freehandTool}
+                color={freehandColor}
+                width={freehandWidth}
+                opacity={freehandOpacity}
+                stabilization={freehandStabilization}
+                palmRejection={freehandPalmRejection}
+                recognizeShapes={freehandRecognizeShapes}
+                snapToGrid={document.editor.snapFreehandToGrid}
+                eraserSize={freehandEraserSize}
+                onSelectProfile={selectFreehandProfile}
+                onSaveProfile={saveFreehandProfile}
+                onDeleteProfile={deleteFreehandProfile}
+                onToolChange={changeFreehandTool}
+                onStyleChange={(style) => {
+                  if (style.color !== undefined) setFreehandColor(style.color);
+                  if (style.width !== undefined) setFreehandWidth(style.width);
+                  if (style.opacity !== undefined) setFreehandOpacity(style.opacity);
+                }}
+                onStabilizationChange={setFreehandStabilization}
+                onPalmRejectionChange={setFreehandPalmRejection}
+                onRecognizeShapesChange={setFreehandRecognizeShapes}
+                onSnapToGridChange={(snapFreehandToGrid) => updateEditorSettings({ snapFreehandToGrid })}
+                onEraserSizeChange={setFreehandEraserSize}
+                onClose={() => setToolMode("select")}
               />
             )}
             {showCanvasSettings && (
